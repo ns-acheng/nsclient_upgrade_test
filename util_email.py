@@ -11,6 +11,7 @@ can be imported without selenium installed (e.g. during testing).
 """
 
 import logging
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -19,8 +20,8 @@ from urllib.parse import parse_qs, urlparse
 
 GMAIL_URL = "https://mail.google.com/"
 DEFAULT_DEBUG_PORT = 9222
-SEARCH_RETRY_INTERVAL = 15  # seconds between retries
-DEFAULT_TIMEOUT = 120  # total seconds to wait for email
+SEARCH_RETRY_INTERVAL = 5  # seconds between retries
+DEFAULT_TIMEOUT = 300  # total seconds to wait for email
 SUBJECT_TEMPLATE = '[EXTERNAL] Netskope New User Onboarding for "{email}"'
 LINK_TEXTS_64 = ["Windows Client (64-bit)", "Windows Client"]
 LINK_TEXTS_32 = ["Windows Client"]
@@ -81,16 +82,24 @@ class GmailBrowser:
         options = Options()
         options.debugger_address = f"localhost:{self._debug_port}"
 
-        # First try: attach to an already-running Chrome
-        try:
-            self._driver = webdriver.Chrome(options=options)
+        # Probe port first — webdriver.Chrome() hangs if nothing is
+        # listening, so skip straight to launch when port is closed.
+        if self._is_port_open(self._debug_port):
+            try:
+                self._driver = webdriver.Chrome(options=options)
+                log.info(
+                    "Connected to Chrome on port %d",
+                    self._debug_port,
+                )
+                return
+            except Exception:
+                log.info(
+                    "Chrome on port %d not usable — relaunching",
+                    self._debug_port,
+                )
+        else:
             log.info(
-                "Connected to Chrome on port %d", self._debug_port
-            )
-            return
-        except Exception:
-            log.info(
-                "Chrome not reachable on port %d — launching",
+                "Nothing listening on port %d — launching Chrome",
                 self._debug_port,
             )
 
@@ -248,6 +257,17 @@ class GmailBrowser:
         self._driver = None
 
     # -- helpers --------------------------------------------------------
+
+    @staticmethod
+    def _is_port_open(port: int, timeout: float = 2.0) -> bool:
+        """Quick check whether anything is listening on localhost:port."""
+        try:
+            with socket.create_connection(
+                ("localhost", port), timeout=timeout,
+            ):
+                return True
+        except (ConnectionRefusedError, TimeoutError, OSError):
+            return False
 
     @staticmethod
     def _dismiss_overlays(driver: Any, by_cls: Any) -> None:

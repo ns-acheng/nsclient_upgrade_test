@@ -104,6 +104,8 @@ class UpgradeRunner:
         email: Optional[str] = None,
         source_64_bit: bool = False,
         target_64_bit: bool = False,
+        reboot_time: Optional[int] = None,
+        reboot_delay: int = 5,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -118,6 +120,8 @@ class UpgradeRunner:
         :param email: User email for WebUI verification.
         :param source_64_bit: Whether the base (source) install is 64-bit.
         :param target_64_bit: Whether the upgrade target is 64-bit.
+        :param reboot_time: Timing number (1-11) that triggers a reboot.
+        :param reboot_delay: Seconds before reboot after timing fires.
         """
         self.webui = webui
         self.client = client
@@ -127,6 +131,10 @@ class UpgradeRunner:
         self.email = email or client.email
         self.source_64_bit = source_64_bit
         self.target_64_bit = target_64_bit
+        self.reboot_time = reboot_time
+        self.reboot_delay = reboot_delay
+        self._cloned_installer: Optional[Path] = None
+        self._upgrade_enabled = False
 
     # ── Upgrade Scenarios ────────────────────────────────────────────
 
@@ -181,13 +189,20 @@ class UpgradeRunner:
                 enable=self.target_64_bit, search_config=self.config_name,
             )
             self.webui.enable_upgrade_latest(search_config=self.config_name)
+            self._upgrade_enabled = True
             self.client.sync_config_from_tenant(
                 is_64_bit=self.source_64_bit, wait_seconds=10,
             )
 
+            # Start timing monitor (background thread)
+            monitor = self._start_monitor()
+
             # Poll for upgrade
             poll = self._wait_for_upgrade(expected_version=expected)
             version_after = poll.final_version
+
+            # Stop monitor and print timing report
+            self._stop_monitor(monitor)
 
             # Post-upgrade checks
             service_running = self._verify_service_running()
@@ -312,13 +327,20 @@ class UpgradeRunner:
             self.webui.enable_upgrade_golden(
                 golden_version, dot=dot, search_config=self.config_name,
             )
+            self._upgrade_enabled = True
             self.client.sync_config_from_tenant(
                 is_64_bit=self.source_64_bit, wait_seconds=10,
             )
 
+            # Start timing monitor (background thread)
+            monitor = self._start_monitor()
+
             # Poll for upgrade
             poll = self._wait_for_upgrade(expected_version=expected)
             version_after = poll.final_version
+
+            # Stop monitor and print timing report
+            self._stop_monitor(monitor)
 
             # Post-upgrade checks
             service_running = self._verify_service_running()
@@ -482,6 +504,29 @@ class UpgradeRunner:
         finally:
             self._cleanup()
 
+    # ── Timing Monitor ───────────────────────────────────────────────
+
+    def _start_monitor(self) -> Optional[Any]:
+        """Start timing monitor if reboot_time is configured."""
+        if self.reboot_time is None:
+            return None
+        from util_monitor import TimingMonitor
+
+        monitor = TimingMonitor(
+            target_64_bit=self.target_64_bit,
+            reboot_time=self.reboot_time,
+            reboot_delay=self.reboot_delay,
+        )
+        monitor.start()
+        return monitor
+
+    def _stop_monitor(self, monitor: Optional[Any]) -> None:
+        """Stop timing monitor and print report."""
+        if monitor is None:
+            return
+        monitor.stop()
+        monitor.print_report()
+
     # ── Shared Helpers ───────────────────────────────────────────────
 
     def _ensure_client_installed(
@@ -616,6 +661,8 @@ class UpgradeRunner:
 
         # Resolve base installer and copy to tenant-specific name
         installer = self._resolve_installer(base_filename, installer_name)
+        if installer_name and installer:
+            self._cloned_installer = installer
 
         if not installer and from_version:
             log.info("No local installer — downloading build (requires nsclient)")
@@ -1110,6 +1157,7 @@ class UpgradeRunner:
                 self.webui.enable_upgrade_golden(
                     golden_version, dot=dot, search_config=self.config_name,
                 )
+            self._upgrade_enabled = True
             self.client.sync_config_from_tenant(
                 is_64_bit=self.source_64_bit, wait_seconds=10,
             )
@@ -1364,9 +1412,26 @@ class UpgradeRunner:
         )
 
     def _cleanup(self) -> None:
-        """Reset tenant config to disable auto-upgrade."""
-        try:
-            self.webui.disable_auto_upgrade(search_config=self.config_name)
-            log.info("Cleanup: auto-upgrade disabled on tenant")
-        except Exception as exc:
-            log.warning("Cleanup failed: %s", exc)
+        """Reset tenant config and remove cloned installer."""
+        if self._upgrade_enabled:
+            try:
+                self.webui.disable_auto_upgrade(search_config=self.config_name)
+                log.info("Cleanup: auto-upgrade disabled on tenant")
+            except Exception as exc:
+                log.warning("Cleanup failed: %s", exc)
+            self._upgrade_enabled = False
+        else:
+            log.info("Cleanup: skipping tenant rollback (upgrade was never enabled)")
+
+        if self._cloned_installer and self._cloned_installer.is_file():
+            try:
+                self._cloned_installer.unlink()
+                log.info(
+                    "Cleanup: deleted cloned installer %s",
+                    self._cloned_installer.name,
+                )
+            except Exception as exc:
+                log.warning(
+                    "Failed to delete cloned installer: %s", exc,
+                )
+            self._cloned_installer = None

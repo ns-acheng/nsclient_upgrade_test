@@ -195,7 +195,7 @@ class TestUpgradeToLatest:
 
     @patch("upgrade_runner.time.sleep", return_value=None)
     @patch("upgrade_runner.time.time")
-    def test_cleanup_on_exception(
+    def test_cleanup_skips_rollback_when_upgrade_never_enabled(
         self,
         mock_time: MagicMock,
         mock_sleep: MagicMock,
@@ -203,7 +203,7 @@ class TestUpgradeToLatest:
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
-        """Cleanup runs even when scenario raises an exception."""
+        """Cleanup skips disable_auto_upgrade when install fails before upgrade is enabled."""
         mock_time.side_effect = [0, 0.5]
         mock_client.download_build.side_effect = Exception("Network error")
 
@@ -211,8 +211,8 @@ class TestUpgradeToLatest:
 
         assert result.success is False
         assert "Exception" in result.message
-        # Cleanup still called
-        mock_webui.disable_auto_upgrade.assert_called()
+        # disable_auto_upgrade NOT called in cleanup — upgrade was never enabled
+        mock_webui.disable_auto_upgrade.assert_not_called()
 
 
 # ── Upgrade to Golden ────────────────────────────────────────────────
@@ -752,8 +752,8 @@ class TestEnsureClientInstalled:
 
         # Base installer still exists
         assert (tmp_path / "STAgent.msi").exists()
-        # Tenant-specific copy was created
-        assert (tmp_path / expected_name).exists()
+        # Tenant-specific copy was cleaned up after upgrade
+        assert not (tmp_path / expected_name).exists()
         # msiexec was called with the tenant-specific name
         mock_client.install_msi.assert_called_once_with(
             str(tmp_path / expected_name),
@@ -1874,3 +1874,77 @@ class TestRebootVerify:
 
         assert result.success is False
         assert "uninstall registry entry missing" in result.message.lower()
+
+
+# ── Timing Monitor Integration ──────────────────────────────────────
+
+
+class TestTimingMonitorIntegration:
+    """Tests for timing monitor start/stop in upgrade scenarios."""
+
+    @patch("util_monitor.TimingMonitor")
+    def test_monitor_started_when_reboot_time_set(
+        self,
+        MockMonitor: MagicMock,
+        mock_webui: MagicMock,
+        mock_client: MagicMock,
+        fast_cfg: UpgradeConfig,
+    ) -> None:
+        """Monitor is created and started when reboot_time is set."""
+        mock_monitor_instance = MagicMock()
+        MockMonitor.return_value = mock_monitor_instance
+
+        mock_client.get_version.return_value = "95.1.0.900"
+        mock_client.is_service_running.return_value = True
+        mock_client.get_msi_subject.return_value = "92.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=True, display_name="Netskope Client",
+            display_version="92.0.0.100", install_location="C:\\fake",
+        )
+
+        runner = UpgradeRunner(
+            webui=mock_webui,
+            client=mock_client,
+            upgrade_cfg=fast_cfg,
+            host_name="test-host",
+            email="test@gmail.com",
+            reboot_time=5,
+            reboot_delay=10,
+        )
+        runner.run_upgrade_to_latest()
+
+        MockMonitor.assert_called_once_with(
+            target_64_bit=False,
+            reboot_time=5,
+            reboot_delay=10,
+        )
+        mock_monitor_instance.start.assert_called_once()
+        mock_monitor_instance.stop.assert_called_once()
+        mock_monitor_instance.print_report.assert_called_once()
+
+    def test_monitor_not_started_when_reboot_time_none(
+        self,
+        mock_webui: MagicMock,
+        mock_client: MagicMock,
+        fast_cfg: UpgradeConfig,
+    ) -> None:
+        """No monitor when reboot_time is None (default)."""
+        mock_client.get_version.return_value = "95.1.0.900"
+        mock_client.is_service_running.return_value = True
+        mock_client.get_msi_subject.return_value = "92.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=True, display_name="Netskope Client",
+            display_version="92.0.0.100", install_location="C:\\fake",
+        )
+
+        runner = UpgradeRunner(
+            webui=mock_webui,
+            client=mock_client,
+            upgrade_cfg=fast_cfg,
+            host_name="test-host",
+            email="test@gmail.com",
+        )
+
+        with patch("util_monitor.TimingMonitor") as MockMonitor:
+            runner.run_upgrade_to_latest()
+            MockMonitor.assert_not_called()

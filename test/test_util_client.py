@@ -529,3 +529,67 @@ class TestCreateVerifyTask:
             bat_path=tmp_path / "missing.bat",
             task_name="TestTask",
         )
+
+
+# ── install_msi ─────────────────────────────────────────────────────
+
+
+class TestInstallMsi:
+    """Tests for install_msi — admin check and msiexec invocation."""
+
+    @patch("util_client.subprocess.run")
+    @patch.object(LocalClient, "_is_admin", return_value=True)
+    def test_success(
+        self, _admin: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Succeeds when msiexec exits 0."""
+        msi = tmp_path / "installer.msi"
+        msi.touch()
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        client = LocalClient()
+        client.install_msi(str(msi))
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "msiexec" in cmd
+        assert "/l*v" in cmd
+
+    @patch.object(LocalClient, "_is_admin", return_value=False)
+    def test_raises_when_not_admin(self, _admin: MagicMock, tmp_path: Path) -> None:
+        """Raises RuntimeError when not running as admin."""
+        msi = tmp_path / "installer.msi"
+        msi.touch()
+
+        client = LocalClient()
+        with pytest.raises(RuntimeError, match="administrator"):
+            client.install_msi(str(msi))
+
+    @patch("util_client.subprocess.run")
+    @patch.object(LocalClient, "_is_admin", return_value=True)
+    def test_failure_includes_log_path(
+        self, _admin: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Error message references msiexec log when install fails."""
+        msi = tmp_path / "installer.msi"
+        msi.touch()
+        # Create the log file that msiexec would produce
+        msi_log = tmp_path / "msiexec.log"
+        msi_log.write_text("verbose log contents", encoding="utf-8")
+        mock_run.return_value = MagicMock(returncode=1603, stdout="", stderr="")
+
+        client = LocalClient()
+        with pytest.raises(RuntimeError, match="1603"):
+            client.install_msi(str(msi))
+
+    @patch("util_client.ctypes")
+    def test_is_admin_returns_true(self, mock_ctypes: MagicMock) -> None:
+        """_is_admin returns True when IsUserAnAdmin returns non-zero."""
+        mock_ctypes.windll.shell32.IsUserAnAdmin.return_value = 1
+        assert LocalClient._is_admin() is True
+
+    @patch("util_client.ctypes")
+    def test_is_admin_returns_false(self, mock_ctypes: MagicMock) -> None:
+        """_is_admin returns False when IsUserAnAdmin returns 0."""
+        mock_ctypes.windll.shell32.IsUserAnAdmin.return_value = 0
+        assert LocalClient._is_admin() is False

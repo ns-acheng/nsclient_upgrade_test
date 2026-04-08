@@ -10,7 +10,7 @@ attributes.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -68,14 +68,19 @@ class TestConnect:
         _mock_selenium.webdriver.Chrome.reset_mock()
         _mock_selenium.webdriver.Chrome.side_effect = None
 
-    def test_connect_success(self) -> None:
+    @patch.object(GmailBrowser, "_is_port_open", return_value=True)
+    def test_connect_success(self, _mock_port: MagicMock) -> None:
         """Successfully attaches to Chrome on debug port."""
         browser = GmailBrowser(email_address="user@example.com")
         browser.connect()
         _mock_selenium.webdriver.Chrome.assert_called_once()
         assert browser._driver is not None
 
-    def test_connect_failure_raises(self) -> None:
+    @patch.object(GmailBrowser, "_launch_chrome")
+    @patch.object(GmailBrowser, "_is_port_open", return_value=False)
+    def test_connect_failure_raises(
+        self, _mock_port: MagicMock, _mock_launch: MagicMock,
+    ) -> None:
         """Raises RuntimeError with helpful message on connection failure."""
         _mock_selenium.webdriver.Chrome.side_effect = Exception(
             "Connection refused"
@@ -84,12 +89,24 @@ class TestConnect:
         with pytest.raises(RuntimeError, match="Could not connect"):
             browser.connect()
 
-    def test_connect_custom_port(self) -> None:
+    @patch.object(GmailBrowser, "_is_port_open", return_value=True)
+    def test_connect_custom_port(self, _mock_port: MagicMock) -> None:
         """Uses the specified debug port."""
         browser = GmailBrowser(
             email_address="user@example.com", debug_port=9333,
         )
         browser.connect()
+        _mock_selenium.webdriver.Chrome.assert_called_once()
+
+    @patch.object(GmailBrowser, "_launch_chrome")
+    @patch.object(GmailBrowser, "_is_port_open", return_value=False)
+    def test_connect_launches_chrome_when_port_closed(
+        self, _mock_port: MagicMock, mock_launch: MagicMock,
+    ) -> None:
+        """Launches Chrome when nothing is listening on the debug port."""
+        browser = GmailBrowser(email_address="user@example.com")
+        browser.connect()
+        mock_launch.assert_called_once()
         _mock_selenium.webdriver.Chrome.assert_called_once()
 
 

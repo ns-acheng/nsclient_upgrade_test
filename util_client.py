@@ -6,6 +6,7 @@ External imports are deferred to create() so the module can be
 imported without nsclient installed (e.g. during testing or --help).
 """
 
+import ctypes
 import json
 import logging
 import subprocess
@@ -282,18 +283,41 @@ class LocalClient:
         Install the client using msiexec silent install (Windows).
 
         :param setup_file_path: Full path to the MSI installer.
+        :raises RuntimeError: If not running as admin or msiexec fails.
         """
+        if not self._is_admin():
+            raise RuntimeError(
+                "msiexec /qn requires administrator privileges. "
+                "Re-run the script as Administrator."
+            )
+
+        msi_log = Path(setup_file_path).parent / "msiexec.log"
         log.info("Installing via msiexec: %s", setup_file_path)
         result = subprocess.run(
-            ["msiexec", "/i", setup_file_path, "/qn"],
+            ["msiexec", "/i", setup_file_path, "/qn", "/l*v", str(msi_log)],
             capture_output=True, timeout=300,
             encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
+            detail = ""
+            if msi_log.is_file():
+                log.error("msiexec verbose log: %s", msi_log)
+                detail = f" (see {msi_log})"
             raise RuntimeError(
-                f"msiexec failed (exit code {result.returncode}): {result.stderr}"
+                f"msiexec failed (exit code {result.returncode}){detail}"
             )
+        # Clean up msi log on success
+        if msi_log.is_file():
+            msi_log.unlink(missing_ok=True)
         log.info("msiexec install completed")
+
+    @staticmethod
+    def _is_admin() -> bool:
+        """Check if the current process has administrator privileges."""
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            return False
 
     def uninstall(self) -> None:
         """Uninstall the currently installed client."""

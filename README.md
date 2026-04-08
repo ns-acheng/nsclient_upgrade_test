@@ -11,6 +11,7 @@ Netskope Client installation.
 - Netskope Client installed on the test machine
 - `pylark-webapi-lib` — Netskope internal WebUI API library (not included)
 - `nsclient` — Netskope Client library (required for `status` and `upgrade`)
+- `selenium` — For Gmail email auto-extraction (auto-installed via requirements.txt)
 
 ## Installation
 
@@ -81,12 +82,12 @@ data/base_version/
   STAgent64.msi    <-- 64-bit installer
 ```
 
-The tool picks the correct file based on platform and the `--64bit` flag:
+The tool picks the correct file based on platform and the `--source-64bit` flag:
 
 | Platform | Flag | Expected file |
 | --- | --- | --- |
 | Windows | *(default)* | `STAgent.msi` |
-| Windows | `--64bit` | `STAgent64.msi` |
+| Windows | `--source-64bit` | `STAgent64.msi` |
 | macOS | | `STAgent.pkg` |
 | Linux | | `STAgent.run` |
 
@@ -98,22 +99,32 @@ from the build server using `--from-version`.
 #### Send email invite (optional)
 
 Use `--email` to send an enrollment email invite to a user before the
-upgrade starts. The tool will prompt you for the download link from the
-email, then rename the base installer to the tenant-specific name before
-installing:
+upgrade starts. The tool automatically extracts the download link from
+Gmail using Selenium. If auto-extraction fails, it falls back to a
+manual paste prompt:
 
 ```bash
 python main.py upgrade --target latest --email user@example.com
 python main.py upgrade --target golden-dot --email user@example.com
 ```
 
+Chrome handling:
+- If Chrome is already running on debug port 9222, Selenium attaches to it.
+- If not, the tool auto-launches Chrome with `--remote-debugging-port=9222`
+  and a local profile (`local_profile/`), then navigates to Gmail.
+- On first use, sign into Gmail manually once — subsequent runs reuse the
+  session via the local profile.
+
 #### Upgrade to latest release
 
 ```bash
 python main.py upgrade --target latest
 
-# Use 64-bit installer
-python main.py upgrade --target latest --64bit
+# 64-bit source and target
+python main.py upgrade --target latest --source-64bit --target-64bit
+
+# Cross-architecture: 32-bit base upgrading to 64-bit target
+python main.py upgrade --target latest --target-64bit
 ```
 
 #### Upgrade to latest golden release (base version only)
@@ -128,6 +139,49 @@ python main.py upgrade --target golden
 python main.py upgrade --target golden-dot
 ```
 
+#### Upgrade with timing monitor
+
+Monitor 11 upgrade lifecycle events in a background thread while the
+upgrade runs. Optionally trigger a reboot at a specific timing:
+
+```bash
+# Monitor only (no reboot) -- timing report prints after upgrade completes
+python main.py upgrade --target latest --source-64bit --target-64bit --reboottime 5 --rebootdelay 0
+
+# Reboot when timing 5 fires (stAgentSvc.exe process gone), delay 5s
+python main.py upgrade --target latest --source-64bit --reboottime 5 --rebootdelay 5
+```
+
+The 11 monitored timings:
+
+| # | Event |
+|---|-------|
+| 1 | stAgentSvcMon.exe -monitor starts |
+| 2 | nsInstallation.log created/updated |
+| 3 | stAgentUI.exe is gone |
+| 4 | stAgentSvc service stopped/stop_pending |
+| 5 | stAgentSvc.exe process gone |
+| 6 | stadrv service stopped/gone |
+| 7 | stAgentSvc service stopped (after process exit) |
+| 8 | stAgentSvc service removed from SCM |
+| 9 | New stAgentSvc.exe in target install dir |
+| 10 | stAgentSvc.exe running with new PID |
+| 11 | stAgentSvcMon.exe stopped & upgraded |
+
+When `--reboottime` triggers a reboot, the tool saves monitor state to
+`data/monitor_state.json` and creates a scheduled task to run
+`python main.py continue` 30 seconds after logon. The `continue` command
+resumes monitoring, prints the final timing report, and cleans up.
+
+#### Resume after reboot
+
+Automatically called by the scheduled task after a monitor-triggered reboot.
+Can also be run manually:
+
+```bash
+python main.py continue --timeout 600
+```
+
 #### Verify auto-upgrade stays disabled
 
 A separate command that installs the base version with auto-upgrade disabled,
@@ -137,7 +191,20 @@ waits, and verifies the client does **not** upgrade (negative test):
 python main.py disable-upgrade
 
 # Use 64-bit installer
-python main.py disable-upgrade --64bit
+python main.py disable-upgrade --source-64bit
+```
+
+#### Reboot-interrupt test
+
+Two-phase test that enables upgrade, reboots during the upgrade process,
+and verifies the client recovers correctly:
+
+```bash
+# Phase 1: Enable upgrade and schedule reboot
+python main.py reboot-setup --target latest --reboot-timing mid --source-64bit --target-64bit
+
+# Phase 2: Runs automatically after logon (30s delay), or manually:
+python main.py reboot-verify
 ```
 
 ### Global Options
@@ -152,14 +219,15 @@ python main.py disable-upgrade --64bit
 
 ### Upgrade Options
 
-These options apply to both `upgrade` and `disable-upgrade` commands:
-
 | Option | Description |
 | --- | --- |
 | `--target` | **Required** (upgrade only). `latest`, `golden`, or `golden-dot` |
-| `--from-version` | Build version for download fallback when no local installer is available (e.g. `123.0.0`) |
-| `--64bit` | Use 64-bit client installer (Windows only) |
-| `--email` | Send enrollment email invite before upgrade (optional) |
+| `--from-version` | Build version for download fallback (e.g. `123.0.0`) |
+| `--source-64bit` | Source (base) install is 64-bit |
+| `--target-64bit` | Upgrade target is 64-bit |
+| `--email` | Send enrollment email invite before upgrade |
+| `--reboottime N` | Timing number (1-11) that triggers a reboot during upgrade |
+| `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
 
 ## Unit Tests
 
@@ -175,8 +243,8 @@ python -m pytest test/ -v
 
 ### Test Structure
 
-- `test/conftest.py` — Mocks external packages (`nsclient`, `webapi`) so tests
-  run without those dependencies installed.
+- `test/conftest.py` — Mocks external packages (`nsclient`, `webapi`, `selenium`)
+  so tests run without those dependencies installed.
 - `test/test_main.py` — Tests for CLI command output and login flow:
   - **cmd_versions** — version display, golden build display, timestamp
     filtering, connect failure handling
@@ -195,6 +263,25 @@ python -m pytest test/ -v
   - **Prepare client** — uninstall-before-install flow, skip-uninstall when not
     installed, local installer exact match, 64-bit selection, single-file rename,
     fallback to download, ambiguous multi-file fallback, missing installer error
+  - **Email auto-extraction** — GmailBrowser integration, fallback to manual
+  - **Timing monitor** — monitor started/stopped when reboot_time is set,
+    skipped when None
+- `test/test_util_monitor.py` — Tests for the upgrade timing monitor:
+  - **TimingEvent** — enum values and descriptions
+  - **MonitorState** — save/load/clear round-trip, corrupt/missing file handling
+  - **Process helpers** — tasklist PID extraction, wmic command line parsing
+  - **Scheduled task** — create/delete continue task
+  - **Detectors** — all 11 timing detectors with mocked subprocess/file state
+  - **Polling loop** — stop event, timeout exit conditions
+  - **Reboot trigger** — state save, task creation, shutdown command
+  - **Report** — formatted output with/without timings, reboot indication
+  - **Resume after reboot** — pre-reboot elapsed offset
+- `test/test_util_email.py` — Tests for Gmail email automation:
+  - **connect** — success, failure, auto-launch Chrome
+  - **get_download_link** — full DOM chain, retry on missing email, timeout
+  - **unwrap redirect** — Google redirect parsing, passthrough
+  - **link text selection** — 64-bit vs 32-bit
+- `test/test_util_client.py` — Tests for local client operations
 - `test/test_util_webui.py` — Tests for WebUI client wrapper:
   - **Connection** — authentication, page object init, missing webapi error,
     auth failure, login timeout

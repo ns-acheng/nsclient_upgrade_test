@@ -105,6 +105,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--email", type=str, default=None,
         help="Send email invite to this address before upgrade",
     )
+    upgrade_parser.add_argument(
+        "--reboottime", type=int, default=None,
+        choices=range(1, 12), metavar="N",
+        help="Timing number (1-11) that triggers a reboot during upgrade",
+    )
+    upgrade_parser.add_argument(
+        "--rebootdelay", type=int, default=5,
+        help="Seconds to wait after timing fires before rebooting (default: 5)",
+    )
 
     # ── disable-upgrade ─────────────────────────────────────────
     disable_parser = subparsers.add_parser(
@@ -167,6 +176,16 @@ def build_parser() -> argparse.ArgumentParser:
     reboot_verify_parser.add_argument(
         "--stabilize-wait", type=int, default=None,
         help="Override seconds to wait for stabilization (default: from saved state)",
+    )
+
+    # ── continue ────────────────────────────────────────────────
+    continue_parser = subparsers.add_parser(
+        "continue",
+        help="Resume timing monitor after reboot (auto-called by scheduled task)",
+    )
+    continue_parser.add_argument(
+        "--timeout", type=int, default=600,
+        help="Max seconds to wait for remaining timings (default: 600)",
     )
 
     return parser
@@ -325,6 +344,36 @@ def cmd_status(cfg: ToolConfig) -> int:
         return 1
 
 
+def cmd_continue(args: argparse.Namespace) -> int:
+    """Resume timing monitor after reboot."""
+    from util_monitor import (
+        TimingMonitor, load_monitor_state, clear_monitor_state,
+        delete_continue_task,
+    )
+
+    state = load_monitor_state()
+    if state is None:
+        print("Error: No monitor state file found. Nothing to continue.")
+        return 1
+
+    log.info("Resuming timing monitor from saved state")
+    monitor = TimingMonitor(
+        target_64_bit=state.target_64_bit,
+        reboot_time=None,
+        timeout=args.timeout,
+        state=state,
+    )
+    monitor.start()
+    monitor.wait_for_completion(timeout=args.timeout)
+    monitor.stop()
+    monitor.print_report()
+
+    clear_monitor_state()
+    delete_continue_task()
+
+    return 0
+
+
 def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
     """Run an upgrade scenario."""
     # Initialize local client (Phase 1 — no nsclient needed)
@@ -345,6 +394,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         config_name=cfg.tenant.config_name,
         source_64_bit=args.source_64_bit,
         target_64_bit=args.target_64_bit,
+        reboot_time=args.reboottime,
+        reboot_delay=args.rebootdelay,
     )
 
     # Execute scenario
@@ -564,10 +615,14 @@ def main() -> int:
         tenant_password=args.password,
     )
 
-    # Setup command doesn't need validation or password
+    # Setup and continue commands don't need tenant validation
     if args.command == "setup":
         setup_logging(verbose=args.verbose)
         return cmd_setup(cfg)
+
+    if args.command == "continue":
+        setup_logging(verbose=args.verbose)
+        return cmd_continue(args)
 
     # Auto-detect tenant and config name from local NSClient
     ns_info = LocalClient.detect_tenant_from_nsconfig()
@@ -618,6 +673,8 @@ def main() -> int:
         return cmd_reboot_setup(cfg, args)
     elif args.command == "reboot-verify":
         return cmd_reboot_verify(cfg, args)
+    elif args.command == "continue":
+        return cmd_continue(args)
     else:
         parser.print_help()
         return 2
