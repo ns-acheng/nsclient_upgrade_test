@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "data" / "config.json"
 
 # Fields that must never be written to the config file
-SENSITIVE_FIELDS = {"password", "gmail_password"}
+SENSITIVE_FIELDS = {"password"}
 
 
 @dataclass
@@ -31,8 +31,6 @@ class ClientConfig:
     """Local client settings."""
     platform: str = "windows"
     email_suffix: str = ""
-    gmail_username: str = ""
-    gmail_password: str = ""
 
 
 @dataclass
@@ -90,8 +88,6 @@ def load_config(
         client=ClientConfig(
             platform=client_raw.get("platform", "windows"),
             email_suffix=client_raw.get("email_suffix", ""),
-            gmail_username=client_raw.get("gmail_username", ""),
-            gmail_password=client_raw.get("gmail_password", ""),
         ),
         upgrade=UpgradeConfig(
             poll_interval_seconds=upgrade_raw.get("poll_interval_seconds", 30),
@@ -142,14 +138,14 @@ def _strip_sensitive(data: dict) -> dict:
     Recursively remove sensitive fields from a dict before writing to disk.
 
     :param data: Dict to sanitize.
-    :return: New dict with sensitive values set to empty string.
+    :return: New dict with sensitive keys removed entirely.
     """
     clean: dict = {}
     for key, value in data.items():
-        if isinstance(value, dict):
+        if key in SENSITIVE_FIELDS:
+            continue
+        elif isinstance(value, dict):
             clean[key] = _strip_sensitive(value)
-        elif key in SENSITIVE_FIELDS:
-            clean[key] = ""
         else:
             clean[key] = value
     return clean

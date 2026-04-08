@@ -1,14 +1,11 @@
 {
     "tenant": {
         "hostname": "",
-        "username": "",
-        "password": ""
+        "username": ""
     },
     "client": {
         "platform": "windows",
-        "email_suffix": "",
-        "gmail_username": "",
-        "gmail_password": ""
+        "email_suffix": ""
     },
     "upgrade": {
         "poll_interval_seconds": 30,
