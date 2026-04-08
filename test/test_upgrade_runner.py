@@ -49,7 +49,6 @@ def mock_webui() -> MagicMock:
     webui.disable_auto_upgrade.return_value = {"status": "success"}
     webui.enable_upgrade_latest.return_value = {"status": "success"}
     webui.enable_upgrade_golden.return_value = {"status": "success"}
-    webui.set_upgrade_schedule.return_value = {"status": "success"}
     webui.set_update_win64bit.return_value = {"status": "success"}
     return webui
 
@@ -305,6 +304,52 @@ class TestUpgradeToGolden:
         mock_client.download_build.assert_called_once()
         dl_args = mock_client.download_build.call_args
         assert "release-87.0.0" == dl_args.kwargs.get("build_version", dl_args[1].get("build_version", ""))
+
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_golden_dot_picks_highest_version_numerically(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        fast_cfg: UpgradeConfig,
+    ) -> None:
+        """golden-dot picks 135.1.10.2611 over 135.1.7.2602 (numeric sort)."""
+        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        mock_client.is_service_running.side_effect = [False, True]
+
+        # Versions that sort differently lexicographically vs numerically
+        mock_webui.get_release_versions.return_value = {
+            "latestversion": "136.0.4.2612",
+            "goldenversions": ["135.0.0"],
+            "135.0.0": [
+                "135.0.0.2500",
+                "135.1.7.2602",
+                "135.1.10.2611",
+            ],
+        }
+        mock_webui.get_sorted_version_list.return_value = ["132.0.0", "135.0.0"]
+
+        # Expected: 135.1.10.2611 (highest numerically, NOT 135.1.7.2602)
+        mock_client.get_version.side_effect = [
+            "132.0.0.100",
+            "132.0.0.100",
+            "135.1.10.2611",
+        ]
+        mock_webui.get_device_version.return_value = "135.1.10.2611"
+
+        runner = UpgradeRunner(
+            webui=mock_webui, client=mock_client, upgrade_cfg=fast_cfg,
+            host_name="test-host", email="test@gmail.com",
+        )
+
+        result = runner.run_upgrade_to_golden(dot=True)
+
+        assert result.success is True
+        assert result.expected_version == "135.1.10.2611"
+        assert result.version_after == "135.1.10.2611"
 
 
 # ── Upgrade Disabled ─────────────────────────────────────────────────
@@ -730,6 +775,204 @@ class TestEnsureClientInstalled:
 
         assert result.success is False
         assert "No installer found" in result.message
+
+
+# ── MSI Version Check ───────────────────────────────────────────────
+
+
+class TestMsiVersionCheck:
+    """Tests for MSI version comparison in _ensure_client_installed."""
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_same_version_running_skips_install(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Case 1: Same version installed and running — skip install."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.return_value = True
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+        mock_client.get_msi_subject.return_value = "92.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=True, display_name="Netskope Client",
+            display_version="92.0.0.100", install_location="C:\\fake",
+            product_code="{GUID-123}",
+        )
+
+        (tmp_path / "STAgent.msi").write_bytes(b"fake")
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.install_msi.assert_not_called()
+        mock_client.uninstall_msi.assert_not_called()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_different_version_uninstalls_first(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Case 0: Different version installed — uninstall then install."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.side_effect = [True, True]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+        mock_client.get_msi_subject.return_value = "90.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=True, display_name="Netskope Client",
+            display_version="92.0.0.100", install_location="C:\\fake",
+            product_code="{GUID-123}",
+        )
+
+        (tmp_path / "STAgent.msi").write_bytes(b"fake")
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.uninstall_msi.assert_called_once_with("{GUID-123}")
+        mock_client.install_msi.assert_called_once()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_same_version_not_running_reinstalls(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Case 2: Same version but not running — uninstall then install."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+        mock_client.get_msi_subject.return_value = "92.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=True, display_name="Netskope Client",
+            display_version="92.0.0.100", install_location="C:\\fake",
+            product_code="{GUID-123}",
+        )
+
+        (tmp_path / "STAgent.msi").write_bytes(b"fake")
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.uninstall_msi.assert_called_once_with("{GUID-123}")
+        mock_client.install_msi.assert_called_once()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_not_installed_does_fresh_install(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Case 3: Not installed — install without uninstall."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+        mock_client.get_msi_subject.return_value = "92.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=False, display_name="", display_version="",
+            install_location="",
+        )
+
+        (tmp_path / "STAgent.msi").write_bytes(b"fake")
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.uninstall_msi.assert_not_called()
+        mock_client.install_msi.assert_called_once()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_no_msi_subject_falls_back_to_service_check(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """When MSI subject is empty, fall back to service running check."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.return_value = True
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+        mock_client.get_msi_subject.return_value = ""
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=True, display_name="Netskope Client",
+            display_version="92.0.0.100", install_location="C:\\fake",
+            product_code="{GUID-123}",
+        )
+
+        (tmp_path / "STAgent.msi").write_bytes(b"fake")
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        # Falls back to service running → skips install
+        mock_client.install_msi.assert_not_called()
+        mock_client.uninstall_msi.assert_not_called()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_different_version_sends_email_after_uninstall(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Email invite is sent after uninstall when version differs."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.side_effect = [True, True]
+        mock_client.get_version.return_value = "90.0.0.100"
+        mock_webui.get_device_version.return_value = "90.0.0.100"
+        mock_client.get_msi_subject.return_value = "90.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=True, display_name="Netskope Client",
+            display_version="92.0.0.100", install_location="C:\\fake",
+            product_code="{GUID-123}",
+        )
+
+        (tmp_path / "STAgent.msi").write_bytes(b"fake")
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path), \
+             patch("builtins.input", return_value=""), \
+             patch("builtins.print"):
+            runner.run_upgrade_disabled(
+                from_version="90.0.0", invite_email="user@example.com",
+            )
+
+        mock_client.uninstall_msi.assert_called_once()
+        mock_webui.send_email_invite.assert_called_once_with("user@example.com")
+        mock_client.install_msi.assert_called_once()
 
 
 # ── Init Nsclient ───────────────────────────────────────────────────

@@ -221,17 +221,18 @@ class TestClientConfig:
         )
 
     def test_enable_upgrade_latest(self, connected_client: tuple) -> None:
-        """enable_upgrade_latest enables clientAllowAutoUpdate."""
+        """enable_upgrade_latest sends upgrade config and schedule in one call."""
         client, mocks = connected_client
         config_instance = mocks["ClientConfiguration"].return_value
         config_instance.update_client_config.return_value = {"status": "success"}
 
         client.enable_upgrade_latest()
 
-        config_instance.update_client_config.assert_called_once_with(
-            search_config="",
-            clientAllowAutoUpdate=1,
-        )
+        config_instance.update_client_config.assert_called_once()
+        kwargs = config_instance.update_client_config.call_args.kwargs
+        assert kwargs["clientAllowAutoUpdate"] == 1
+        assert "useScheduledUpgrade" in kwargs
+        assert kwargs["useScheduledUpgrade"]["frequencyType"] == "daily"
 
     def test_enable_upgrade_golden_without_dot(self, connected_client: tuple) -> None:
         """enable_upgrade_golden sets golden version without dot release."""
@@ -241,13 +242,13 @@ class TestClientConfig:
 
         client.enable_upgrade_golden("90.0.0", dot=False)
 
-        config_instance.update_client_config.assert_called_once_with(
-            search_config="",
-            clientAllowAutoUpdate=1,
-            allowAutoGoldenUpdate=1,
-            goldenReleaseVersion="90.0.0",
-            goldenDotReleaseUpdate=0,
-        )
+        config_instance.update_client_config.assert_called_once()
+        kwargs = config_instance.update_client_config.call_args.kwargs
+        assert kwargs["clientAllowAutoUpdate"] == 1
+        assert kwargs["allowAutoGoldenUpdate"] == 1
+        assert kwargs["goldenReleaseVersion"] == "90.0.0"
+        assert kwargs["goldenDotReleaseUpdate"] == 0
+        assert "useScheduledUpgrade" in kwargs
 
     def test_enable_upgrade_golden_with_dot(self, connected_client: tuple) -> None:
         """enable_upgrade_golden with dot=True enables dot release updates."""
@@ -257,13 +258,10 @@ class TestClientConfig:
 
         client.enable_upgrade_golden("90.0.0", dot=True)
 
-        config_instance.update_client_config.assert_called_once_with(
-            search_config="",
-            clientAllowAutoUpdate=1,
-            allowAutoGoldenUpdate=1,
-            goldenReleaseVersion="90.0.0",
-            goldenDotReleaseUpdate=1,
-        )
+        config_instance.update_client_config.assert_called_once()
+        kwargs = config_instance.update_client_config.call_args.kwargs
+        assert kwargs["goldenDotReleaseUpdate"] == 1
+        assert "useScheduledUpgrade" in kwargs
 
     def test_get_client_config(self, connected_client: tuple) -> None:
         """get_client_config passes search_config to the API."""
@@ -313,17 +311,17 @@ class TestDeviceQueries:
         )
 
 
-# ── Upgrade Schedule ─────────────────────────────────────────────────
+# ── Upgrade Schedule (embedded in enable methods) ────────────────────
 
 
 class TestUpgradeSchedule:
-    """Tests for set_upgrade_schedule."""
+    """Tests for schedule embedded in enable_upgrade_latest/golden."""
 
     @patch("util_webui.datetime")
-    def test_set_upgrade_schedule_default(
+    def test_latest_includes_schedule(
         self, mock_dt: MagicMock, connected_client: tuple,
     ) -> None:
-        """set_upgrade_schedule posts useScheduledUpgrade with time = now + 2 min."""
+        """enable_upgrade_latest includes useScheduledUpgrade in the same call."""
         client, mocks = connected_client
         config_instance = mocks["ClientConfiguration"].return_value
         config_instance.update_client_config.return_value = {"status": "success"}
@@ -333,10 +331,11 @@ class TestUpgradeSchedule:
         mock_dt.now.return_value = fake_now
         mock_dt.side_effect = lambda *a, **kw: real_datetime(*a, **kw)
 
-        client.set_upgrade_schedule()
+        client.enable_upgrade_latest()
 
         config_instance.update_client_config.assert_called_once_with(
             search_config="",
+            clientAllowAutoUpdate=1,
             useScheduledUpgrade={
                 "frequencyType": "daily",
                 "weekDay": [],
@@ -346,10 +345,40 @@ class TestUpgradeSchedule:
         )
 
     @patch("util_webui.datetime")
-    def test_set_upgrade_schedule_custom_minutes(
+    def test_golden_includes_schedule(
         self, mock_dt: MagicMock, connected_client: tuple,
     ) -> None:
-        """set_upgrade_schedule respects custom minutes_from_now."""
+        """enable_upgrade_golden includes useScheduledUpgrade in the same call."""
+        client, mocks = connected_client
+        config_instance = mocks["ClientConfiguration"].return_value
+        config_instance.update_client_config.return_value = {"status": "success"}
+
+        from datetime import datetime as real_datetime
+        fake_now = real_datetime(2026, 4, 8, 14, 30)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: real_datetime(*a, **kw)
+
+        client.enable_upgrade_golden("90.0.0", dot=True, schedule_minutes=5)
+
+        config_instance.update_client_config.assert_called_once_with(
+            search_config="",
+            clientAllowAutoUpdate=1,
+            allowAutoGoldenUpdate=1,
+            goldenReleaseVersion="90.0.0",
+            goldenDotReleaseUpdate=1,
+            useScheduledUpgrade={
+                "frequencyType": "daily",
+                "weekDay": [],
+                "weekOfTheMonth": [],
+                "time": "14:35",
+            },
+        )
+
+    @patch("util_webui.datetime")
+    def test_latest_custom_schedule_minutes(
+        self, mock_dt: MagicMock, connected_client: tuple,
+    ) -> None:
+        """enable_upgrade_latest respects custom schedule_minutes."""
         client, mocks = connected_client
         config_instance = mocks["ClientConfiguration"].return_value
         config_instance.update_client_config.return_value = {"status": "success"}
@@ -359,10 +388,11 @@ class TestUpgradeSchedule:
         mock_dt.now.return_value = fake_now
         mock_dt.side_effect = lambda *a, **kw: real_datetime(*a, **kw)
 
-        client.set_upgrade_schedule(minutes_from_now=10, search_config="my_config")
+        client.enable_upgrade_latest(schedule_minutes=10, search_config="cfg")
 
         config_instance.update_client_config.assert_called_once_with(
-            search_config="my_config",
+            search_config="cfg",
+            clientAllowAutoUpdate=1,
             useScheduledUpgrade={
                 "frequencyType": "daily",
                 "weekDay": [],
@@ -370,12 +400,6 @@ class TestUpgradeSchedule:
                 "time": "00:05",
             },
         )
-
-    def test_set_upgrade_schedule_raises_when_not_connected(self) -> None:
-        """set_upgrade_schedule raises when not connected."""
-        client = WebUIClient()
-        with pytest.raises(RuntimeError, match="Not connected"):
-            client.set_upgrade_schedule()
 
 
 # ── Email Invite ─────────────────────────────────────────────────────

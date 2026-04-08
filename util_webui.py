@@ -175,17 +175,35 @@ class WebUIClient:
             goldenDotReleaseUpdate=0,
         )
 
-    def enable_upgrade_latest(self, search_config: str = "") -> dict[str, Any]:
+    def enable_upgrade_latest(
+        self,
+        search_config: str = "",
+        schedule_minutes: int = 2,
+    ) -> dict[str, Any]:
         """
-        Enable auto-upgrade to the latest release.
+        Enable auto-upgrade to the latest release and schedule it.
 
         :param search_config: Config name (empty for default).
+        :param schedule_minutes: Minutes from now to trigger upgrade.
         :return: API response dict.
         """
-        log.info("Enabling auto-upgrade to LATEST release (config=%r)", search_config or "(default)")
+        upgrade_time = (
+            datetime.now() + timedelta(minutes=schedule_minutes)
+        ).strftime("%H:%M")
+        schedule: dict[str, Any] = {
+            "frequencyType": "daily",
+            "weekDay": [],
+            "weekOfTheMonth": [],
+            "time": upgrade_time,
+        }
+        log.info(
+            "Enabling auto-upgrade to LATEST release, schedule=%s (now + %d min), config=%r",
+            upgrade_time, schedule_minutes, search_config or "(default)",
+        )
         return self.update_client_config(
             search_config=search_config,
             clientAllowAutoUpdate=1,
+            useScheduledUpgrade=schedule,
         )
 
     def enable_upgrade_golden(
@@ -193,18 +211,29 @@ class WebUIClient:
         golden_version: str,
         dot: bool = False,
         search_config: str = "",
+        schedule_minutes: int = 2,
     ) -> dict[str, Any]:
         """
-        Enable auto-upgrade to a specific golden release.
+        Enable auto-upgrade to a specific golden release and schedule it.
 
         :param golden_version: Target golden version string (e.g. '90.0.0').
         :param dot: If True, enable dot release updates within the golden.
         :param search_config: Config name (empty for default).
+        :param schedule_minutes: Minutes from now to trigger upgrade.
         :return: API response dict.
         """
+        upgrade_time = (
+            datetime.now() + timedelta(minutes=schedule_minutes)
+        ).strftime("%H:%M")
+        schedule: dict[str, Any] = {
+            "frequencyType": "daily",
+            "weekDay": [],
+            "weekOfTheMonth": [],
+            "time": upgrade_time,
+        }
         log.info(
-            "Enabling auto-upgrade to GOLDEN release %s (dot=%s, config=%r)",
-            golden_version, dot, search_config or "(default)",
+            "Enabling auto-upgrade to GOLDEN release %s (dot=%s), schedule=%s (now + %d min), config=%r",
+            golden_version, dot, upgrade_time, schedule_minutes, search_config or "(default)",
         )
         return self.update_client_config(
             search_config=search_config,
@@ -212,6 +241,7 @@ class WebUIClient:
             allowAutoGoldenUpdate=1,
             goldenReleaseVersion=golden_version,
             goldenDotReleaseUpdate=1 if dot else 0,
+            useScheduledUpgrade=schedule,
         )
 
     # ── 64-bit Upgrade Flag ──────────────────────────────────────────
@@ -239,41 +269,6 @@ class WebUIClient:
         return self.update_client_config(
             search_config=search_config,
             updateWin64Bit=value,
-        )
-
-    # ── Upgrade Schedule ─────────────────────────────────────────────
-
-    def set_upgrade_schedule(
-        self,
-        minutes_from_now: int = 2,
-        search_config: str = "",
-    ) -> dict[str, Any]:
-        """
-        Schedule client upgrade to trigger a given number of minutes from now.
-
-        Sets the ``useScheduledUpgrade`` field via saveClientConfig so the
-        tenant triggers the upgrade at the computed time.
-
-        :param minutes_from_now: Minutes from now to schedule the upgrade.
-        :param search_config: Config name (empty for default).
-        :return: API response dict.
-        """
-        upgrade_time = (
-            datetime.now() + timedelta(minutes=minutes_from_now)
-        ).strftime("%H:%M")
-        schedule: dict[str, Any] = {
-            "frequencyType": "daily",
-            "weekDay": [],
-            "weekOfTheMonth": [],
-            "time": upgrade_time,
-        }
-        log.info(
-            "Setting upgrade schedule: time=%s (now + %d min), config=%r",
-            upgrade_time, minutes_from_now, search_config or "(default)",
-        )
-        return self.update_client_config(
-            search_config=search_config,
-            useScheduledUpgrade=schedule,
         )
 
     # ── Email Invite ─────────────────────────────────────────────────

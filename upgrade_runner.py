@@ -26,6 +26,11 @@ from util_webui import WebUIClient
 BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
 INSTALLER_JSON = Path(__file__).parent / "data" / "installer.json"
 
+
+def _version_key(version: str) -> tuple[int, ...]:
+    """Parse a dotted version string into a tuple of ints for sorting."""
+    return tuple(int(x) for x in version.split("."))
+
 log = logging.getLogger(__name__)
 
 
@@ -173,9 +178,6 @@ class UpgradeRunner:
                 enable=self.is_64_bit, search_config=self.config_name,
             )
             self.webui.enable_upgrade_latest(search_config=self.config_name)
-            self.webui.set_upgrade_schedule(
-                minutes_from_now=2, search_config=self.config_name,
-            )
             self.client.sync_config_from_tenant(
                 is_64_bit=self.is_64_bit, wait_seconds=10,
             )
@@ -267,7 +269,7 @@ class UpgradeRunner:
         try:
             # Resolve latest golden version for auto-pick before install
             all_versions = self.webui.get_release_versions()
-            golden_versions_sorted = sorted(all_versions["goldenversions"])
+            golden_versions_sorted = sorted(all_versions["goldenversions"], key=_version_key)
             golden_version = golden_versions_sorted[-1]
             log.info("Selected golden version: %s", golden_version)
 
@@ -293,9 +295,9 @@ class UpgradeRunner:
 
             # Determine expected version after upgrade
             if dot:
-                expected = sorted(all_versions[golden_version])[-1]
+                expected = sorted(all_versions[golden_version], key=_version_key)[-1]
             else:
-                expected = sorted(all_versions[golden_version])[0]
+                expected = sorted(all_versions[golden_version], key=_version_key)[0]
             expected = self._apply_64bit_suffix(expected)
             log.info("Expected version after upgrade: %s", expected)
 
@@ -306,9 +308,6 @@ class UpgradeRunner:
             )
             self.webui.enable_upgrade_golden(
                 golden_version, dot=dot, search_config=self.config_name,
-            )
-            self.webui.set_upgrade_schedule(
-                minutes_from_now=2, search_config=self.config_name,
             )
             self.client.sync_config_from_tenant(
                 is_64_bit=self.is_64_bit, wait_seconds=10,
@@ -486,23 +485,94 @@ class UpgradeRunner:
         invite_email: Optional[str] = None,
     ) -> None:
         """
-        Ensure the Netskope Client is installed and running (Phase 1).
+        Ensure the Netskope Client is installed at the correct base
+        version and running (Phase 1).
 
-        Uses only subprocess calls (msiexec, sc query) — no nsclient needed.
-        If the service is already running, returns immediately.
-        Otherwise: sends email invite, reads the tenant-specific installer
-        name from data/installer.json, copies the base installer to that
-        name, installs via msiexec, and waits for the service to start.
+        Compares the installed version (from registry) against the base
+        MSI's Subject field:
+
+        - **(0) Different version installed** — uninstall via msiexec /x,
+          then do full install flow.
+        - **(1) Same version and service running** — skip install, go
+          straight to upgrade.
+        - **(2) Same version but service not running** — uninstall via
+          msiexec /x, then do full install flow.
+        - **(3) Not installed** — do full install flow.
+
+        The install flow: send email invite (if requested), resolve
+        installer (with optional tenant-specific rename), install via
+        msiexec, wait for service.
 
         :param from_version: Build version for download fallback
                              (e.g. '123.0.0').
         :param invite_email: Email to send enrollment invite before install.
         """
-        if self.client.is_service_running():
-            log.info("Client service already running — skipping install")
-            return
+        # Step 1: Find base installer for version comparison
+        base_filename = self.client.get_installer_filename(is_64_bit=self.is_64_bit)
+        base_installer = self._find_base_installer(base_filename)
 
-        log.info("Client service not running — installing base version")
+        # Step 2: Read MSI subject to get base version
+        msi_version = ""
+        if base_installer:
+            msi_version = self.client.get_msi_subject(base_installer)
+            if msi_version:
+                log.info("Base MSI version (subject): %s", msi_version)
+
+        # Step 3: Check current installation state
+        uninstall_info = self.client.check_uninstall_registry()
+        service_running = self.client.is_service_running()
+
+        if uninstall_info.found and msi_version:
+            installed_version = uninstall_info.display_version
+            log.info(
+                "Installed: %s (running=%s), base MSI: %s",
+                installed_version, service_running, msi_version,
+            )
+            if installed_version == msi_version and service_running:
+                # Case 1: Same version and running — skip install
+                log.info(
+                    "Installed version matches base MSI and running "
+                    "— skipping install"
+                )
+                return
+            elif installed_version == msi_version:
+                # Case 2: Same version but not running — uninstall first
+                log.info(
+                    "Same version but not running — uninstalling "
+                    "before reinstall"
+                )
+                self.client.uninstall_msi(uninstall_info.product_code)
+                time.sleep(10)
+            else:
+                # Case 0: Different version — uninstall first
+                log.info(
+                    "Installed version %s differs from base MSI %s "
+                    "— uninstalling first",
+                    installed_version, msi_version,
+                )
+                self.client.uninstall_msi(uninstall_info.product_code)
+                time.sleep(10)
+        elif uninstall_info.found:
+            # Installed but no MSI version to compare — fall back to
+            # service check
+            if service_running:
+                log.info(
+                    "Client running (no MSI version to compare) "
+                    "— skipping install"
+                )
+                return
+            log.info(
+                "Client installed but not running (no MSI version) "
+                "— uninstalling"
+            )
+            self.client.uninstall_msi(uninstall_info.product_code)
+            time.sleep(10)
+        else:
+            # Case 3: Not installed
+            log.info("No existing installation found")
+
+        # Step 4: Full install flow
+        log.info("Installing base client")
 
         # Send email invite before installation
         if invite_email:
@@ -525,7 +595,6 @@ class UpgradeRunner:
                 log.info("No download link provided — using base installer name")
 
         # Resolve base installer and copy to tenant-specific name
-        base_filename = self.client.get_installer_filename(is_64_bit=self.is_64_bit)
         installer = self._resolve_installer(base_filename, installer_name)
 
         if not installer and from_version:
@@ -556,6 +625,26 @@ class UpgradeRunner:
             raise RuntimeError(
                 "Client service (stAgentSvc) did not start after installation"
             )
+
+    @staticmethod
+    def _find_base_installer(base_filename: str) -> Optional[Path]:
+        """
+        Find the base installer file in data/base_version/ without
+        renaming or copying anything.
+
+        :param base_filename: Expected installer name (e.g. 'STAgent.msi').
+        :return: Path to the installer, or None if not found.
+        """
+        if not BASE_VERSION_DIR.is_dir():
+            return None
+        base = BASE_VERSION_DIR / base_filename
+        if base.is_file():
+            return base
+        # Single-file fallback
+        files = [f for f in BASE_VERSION_DIR.iterdir() if f.is_file()]
+        if len(files) == 1:
+            return files[0]
+        return None
 
     @staticmethod
     def _extract_token_from_url(download_link: str) -> str:
@@ -949,12 +1038,12 @@ class UpgradeRunner:
             if target_type == "latest":
                 expected = all_versions["latestversion"]
             else:
-                golden_versions_sorted = sorted(all_versions["goldenversions"])
+                golden_versions_sorted = sorted(all_versions["goldenversions"], key=_version_key)
                 golden_version = golden_versions_sorted[-1]
                 if dot:
-                    expected = sorted(all_versions[golden_version])[-1]
+                    expected = sorted(all_versions[golden_version], key=_version_key)[-1]
                 else:
-                    expected = sorted(all_versions[golden_version])[0]
+                    expected = sorted(all_versions[golden_version], key=_version_key)[0]
             expected = self._apply_64bit_suffix(expected, is_64_bit=t64)
             log.info("Expected version after upgrade: %s", expected)
 
@@ -969,9 +1058,6 @@ class UpgradeRunner:
                 self.webui.enable_upgrade_golden(
                     golden_version, dot=dot, search_config=self.config_name,
                 )
-            self.webui.set_upgrade_schedule(
-                minutes_from_now=2, search_config=self.config_name,
-            )
             self.client.sync_config_from_tenant(
                 is_64_bit=t64, wait_seconds=10,
             )
