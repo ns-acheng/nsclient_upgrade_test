@@ -1,7 +1,7 @@
 {
     "tenant": {
-        "hostname": "",
-        "username": ""
+        "hostname": "exploratory2.stg.boomskope.com",
+        "username": "acheng@netskope.com"
     },
     "client": {
         "platform": "windows",
