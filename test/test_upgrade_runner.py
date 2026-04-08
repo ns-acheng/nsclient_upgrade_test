@@ -206,7 +206,7 @@ class TestUpgradeToGolden:
         ]
         mock_webui.get_device_version.return_value = "90.0.0.100"
 
-        result = runner.run_upgrade_to_golden(golden_index=-1, dot=False)
+        result = runner.run_upgrade_to_golden(dot=False)
 
         assert result.success is True
         assert result.version_after == "90.0.0.100"
@@ -233,37 +233,11 @@ class TestUpgradeToGolden:
         ]
         mock_webui.get_device_version.return_value = "90.1.0.300"
 
-        result = runner.run_upgrade_to_golden(golden_index=-1, dot=True)
+        result = runner.run_upgrade_to_golden(dot=True)
 
         assert result.success is True
         assert result.version_after == "90.1.0.300"
         mock_webui.enable_upgrade_golden.assert_called_once_with("90.0.0", dot=True)
-
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
-    def test_golden_n_minus_1(
-        self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
-        runner: UpgradeRunner,
-        mock_client: MagicMock,
-        mock_webui: MagicMock,
-    ) -> None:
-        """Upgrade to N-1 golden (index=-2 = 87.0.0)."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-
-        mock_client.get_version.side_effect = [
-            "80.0.0.100",
-            "80.0.0.100",
-            "87.0.0.100",
-        ]
-        mock_webui.get_device_version.return_value = "87.0.0.100"
-
-        result = runner.run_upgrade_to_golden(golden_index=-2, dot=False)
-
-        assert result.success is True
-        assert result.version_after == "87.0.0.100"
-        mock_webui.enable_upgrade_golden.assert_called_once_with("87.0.0", dot=False)
 
     @patch("upgrade_runner.time.sleep", return_value=None)
     @patch("upgrade_runner.time.time")
@@ -280,7 +254,7 @@ class TestUpgradeToGolden:
         mock_client.get_version.side_effect = ["87.0.0.100", "87.0.0.100", "90.0.0.100"]
         mock_webui.get_device_version.return_value = "90.0.0.100"
 
-        result = runner.run_upgrade_to_golden(from_version=None, golden_index=-1, dot=False)
+        result = runner.run_upgrade_to_golden(from_version=None, dot=False)
 
         assert result.success is True
         # Should have auto-picked release-87.0.0 (max version < 90)

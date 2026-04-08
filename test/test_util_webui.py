@@ -87,6 +87,30 @@ class TestConnect:
         mock_webapi_module["Authentication"].return_value.login.assert_called_once()
         assert client.is_connected is True
 
+    def test_connect_raises_on_auth_failure(self, mock_webapi_module: dict) -> None:
+        """connect() propagates auth exceptions and resets state."""
+        mock_webapi_module["Authentication"].return_value.login.side_effect = (
+            Exception("Tenant authentication failed, invalid username or password")
+        )
+        client = WebUIClient()
+        with pytest.raises(Exception, match="invalid username or password"):
+            client.connect("host", "user", "bad_pass")
+        assert client.is_connected is False
+
+    @patch("util_webui.LOGIN_TIMEOUT_SECONDS", 1)
+    def test_connect_raises_on_timeout(self, mock_webapi_module: dict) -> None:
+        """connect() raises TimeoutError if login hangs."""
+        import time
+
+        def hang_login():
+            time.sleep(5)
+
+        mock_webapi_module["Authentication"].return_value.login.side_effect = hang_login
+        client = WebUIClient()
+        with pytest.raises(TimeoutError, match="Login timed out"):
+            client.connect("host", "user", "pass")
+        assert client.is_connected is False
+
     def test_connect_initializes_page_objects(self, mock_webapi_module: dict) -> None:
         """connect() initializes ClientConfiguration and Devices."""
         client = WebUIClient()

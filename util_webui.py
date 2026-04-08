@@ -7,7 +7,10 @@ imported without webapi installed (e.g. during testing or --help).
 """
 
 import logging
+import threading
 from typing import Any, Optional
+
+LOGIN_TIMEOUT_SECONDS = 60
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +57,30 @@ class WebUIClient:
         log.info("Connecting to tenant: %s as %s", hostname, username)
         self._webapi = WebAPI(hostname=hostname, username=username, password=password)
         auth = Authentication(self._webapi)
-        auth.login()
+
+        # Run login in a thread with a timeout so a bad password can't hang
+        login_error: list[BaseException] = []
+
+        def _do_login() -> None:
+            try:
+                auth.login()
+            except Exception as exc:
+                login_error.append(exc)
+
+        thread = threading.Thread(target=_do_login, daemon=True)
+        thread.start()
+        thread.join(timeout=LOGIN_TIMEOUT_SECONDS)
+
+        if thread.is_alive():
+            self._webapi = None
+            raise TimeoutError(
+                f"Login timed out after {LOGIN_TIMEOUT_SECONDS}s — "
+                "invalid username or password"
+            )
+        if login_error:
+            self._webapi = None
+            raise login_error[0]
+
         log.info("Successfully authenticated to %s", hostname)
 
         # Initialize page objects

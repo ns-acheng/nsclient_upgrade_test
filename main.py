@@ -18,12 +18,14 @@ from pathlib import Path
 
 from util_config import load_config, save_config, validate_config, ToolConfig
 from util_log import setup_logging
-from util_secret import load_password, save_password
+from util_secret import load_password, save_password, clear_password
 from util_webui import WebUIClient
 from util_client import LocalClient
 from upgrade_runner import UpgradeRunner, UpgradeResult
 
 log = logging.getLogger(__name__)
+
+MAX_LOGIN_ATTEMPTS = 3
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,15 +92,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build version to install before upgrade (e.g. release-92.0.0)",
     )
     upgrade_parser.add_argument(
-        "--golden-index", type=int, default=-1,
-        help="Golden version index: -1=latest, -2=N-1, -3=N-2 (default: -1)",
-    )
-    upgrade_parser.add_argument(
         "--dot", action="store_true",
         help="Enable dot release updates for golden upgrade",
     )
 
     return parser
+
+
+def connect_with_retry(webui: WebUIClient, cfg: ToolConfig) -> bool:
+    """
+    Try to connect to the tenant. On auth failure, clear the saved
+    password and re-prompt up to MAX_LOGIN_ATTEMPTS total tries.
+
+    :param webui: WebUIClient instance.
+    :param cfg: ToolConfig (cfg.tenant.password is updated on retry).
+    :return: True if connected, False if all attempts failed.
+    """
+    for attempt in range(1, MAX_LOGIN_ATTEMPTS + 1):
+        try:
+            webui.connect(cfg.tenant.hostname, cfg.tenant.username, cfg.tenant.password)
+            save_password(cfg.tenant.password)
+            return True
+        except Exception as exc:
+            if "invalid username or password" not in str(exc).lower():
+                raise
+            remaining = MAX_LOGIN_ATTEMPTS - attempt
+            if remaining == 0:
+                print(f"\n  Authentication failed after {MAX_LOGIN_ATTEMPTS} attempts.")
+                return False
+            print(f"\n  Login failed — invalid password. {remaining} attempt(s) remaining.")
+            clear_password()
+            cfg.tenant.password = _prompt_password(
+                f"Password for {cfg.tenant.username}@{cfg.tenant.hostname}"
+            )
+    return False
 
 
 def cmd_setup(cfg: ToolConfig) -> int:
@@ -119,7 +146,7 @@ def cmd_setup(cfg: ToolConfig) -> int:
     if platform:
         cfg.client.platform = platform
 
-    password = getpass.getpass("  Admin password  : ").strip()
+    password = _prompt_password("Admin password").strip()
     if password:
         save_password(password)
         print("  Password encrypted and saved.")
@@ -132,7 +159,8 @@ def cmd_setup(cfg: ToolConfig) -> int:
 def cmd_versions(cfg: ToolConfig) -> int:
     """List available release versions from the tenant."""
     webui = WebUIClient()
-    webui.connect(cfg.tenant.hostname, cfg.tenant.username, cfg.tenant.password)
+    if not connect_with_retry(webui, cfg):
+        return 1
 
     versions = webui.get_release_versions()
 
@@ -164,14 +192,28 @@ def cmd_versions(cfg: ToolConfig) -> int:
     return 0
 
 
+def _check_nsclient_available() -> bool:
+    """
+    Check if the nsclient package is importable.
+
+    :return: True if available, False otherwise.
+    """
+    try:
+        import nsclient  # noqa: F401
+        return True
+    except ModuleNotFoundError:
+        return False
+
+
 def cmd_status(cfg: ToolConfig) -> int:
     """Show current local client status."""
-    # Status doesn't require tenant connection — just local checks
+    if not _check_nsclient_available():
+        print("\nError: nsclient package is not installed.")
+        print("  Install the Netskope Client library to use this command.")
+        return 1
+
     try:
-        client = LocalClient()
-        # Try direct nsclient operations without full initialization
         from nsclient.nsclient import get_nsclient_instance
-        # Minimal init for local-only checks
         client_obj = get_nsclient_instance(
             platform=cfg.client.platform,
             email="status-check@local",
@@ -199,6 +241,12 @@ def cmd_status(cfg: ToolConfig) -> int:
 
 def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
     """Run an upgrade scenario."""
+    # Abort early if nsclient is not available
+    if not _check_nsclient_available():
+        print("\nError: nsclient package is not installed.")
+        print("  Install the Netskope Client library before running upgrade.")
+        return 1
+
     # Validate from-version for scenarios that need it
     if args.target in ("latest", "disabled") and not args.from_version:
         print("Error: --from-version is required for --target latest and --target disabled")
@@ -206,12 +254,11 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
 
     # Connect to WebUI
     webui = WebUIClient()
-    webui.connect(cfg.tenant.hostname, cfg.tenant.username, cfg.tenant.password)
+    if not connect_with_retry(webui, cfg):
+        return 1
 
     # Initialize local client
     client = LocalClient()
-    # Note: In production use, client.create() needs stack/tenant objects.
-    # For now, the caller must ensure nsclient is properly configured.
     log.info("Client and WebUI initialized for upgrade scenario")
 
     # Create runner
@@ -230,7 +277,6 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
     elif args.target == "golden":
         result = runner.run_upgrade_to_golden(
             from_version=args.from_version,
-            golden_index=args.golden_index,
             dot=args.dot,
         )
 
@@ -261,6 +307,11 @@ def _print_result(result: UpgradeResult) -> None:
     print()
 
 
+def _prompt_password(label: str) -> str:
+    """Prompt for a password with a colored label."""
+    return getpass.getpass(f"\033[33m  {label}: \033[0m")
+
+
 def main() -> int:
     """Main entry point."""
     parser = build_parser()
@@ -270,10 +321,7 @@ def main() -> int:
         parser.print_help()
         return 2
 
-    # Setup logging
-    setup_logging(verbose=args.verbose)
-
-    # Load config
+    # Load config quietly first (before logging) to resolve password early
     cfg = load_config(
         config_path=args.config,
         tenant_hostname=args.tenant,
@@ -281,25 +329,27 @@ def main() -> int:
         tenant_password=args.password,
     )
 
-    # Setup command doesn't need validation
+    # Setup command doesn't need validation or password
     if args.command == "setup":
+        setup_logging(verbose=args.verbose)
         return cmd_setup(cfg)
 
-    # For commands that need a tenant, resolve password:
+    # Resolve password BEFORE logging starts so the prompt is not buried
     #   1. CLI --password flag  (already in cfg)
     #   2. Saved encrypted password
-    #   3. Prompt user and save for next time
+    #   3. Prompt user
     require_tenant = args.command in ("versions", "upgrade")
     if require_tenant and cfg.tenant.hostname and cfg.tenant.username and not cfg.tenant.password:
         saved = load_password()
         if saved:
             cfg.tenant.password = saved
-            log.info("Using saved encrypted password")
         else:
-            cfg.tenant.password = getpass.getpass(
-                f"  Password for {cfg.tenant.username}@{cfg.tenant.hostname}: "
+            cfg.tenant.password = _prompt_password(
+                f"Password for {cfg.tenant.username}@{cfg.tenant.hostname}"
             )
-            save_password(cfg.tenant.password)
+
+    # Now start logging
+    setup_logging(verbose=args.verbose)
 
     # Validate config
     errors = validate_config(cfg, require_tenant=require_tenant)

@@ -144,32 +144,29 @@ class UpgradeRunner:
     def run_upgrade_to_golden(
         self,
         from_version: Optional[str] = None,
-        golden_index: int = -1,
         dot: bool = False,
     ) -> UpgradeResult:
         """
-        Scenario: Install older version, enable auto-upgrade to a golden
-        release, wait and verify.
+        Scenario: Install older version, enable auto-upgrade to the latest
+        golden release, wait and verify.
 
         :param from_version: Build to install first. If None, auto-picks
                              a version older than the target golden.
-        :param golden_index: Index into sorted golden versions list.
-                             -1 = latest golden, -2 = N-1, -3 = N-2.
         :param dot: If True, enable dot release within the golden version.
         :return: UpgradeResult with outcome details.
         """
-        scenario = f"upgrade_to_golden(index={golden_index}, dot={dot})"
+        scenario = f"upgrade_to_golden(dot={dot})"
         start_time = time.time()
         log.info("=" * 70)
         log.info("SCENARIO: Upgrade to Golden Release")
-        log.info("  golden_index: %d, dot: %s, from_version: %s", golden_index, dot, from_version)
+        log.info("  dot: %s, from_version: %s", dot, from_version)
         log.info("=" * 70)
 
         try:
-            # Resolve golden version and expected target
+            # Resolve latest golden version and expected target
             all_versions = self.webui.get_release_versions()
             golden_versions_sorted = sorted(all_versions["goldenversions"])
-            golden_version = golden_versions_sorted[golden_index]
+            golden_version = golden_versions_sorted[-1]
             log.info("Selected golden version: %s", golden_version)
 
             # Determine expected version after upgrade

@@ -17,7 +17,7 @@ NOISY_LOGGERS = ("urllib3", "requests", "chardet", "charset_normalizer")
 
 # webapi logs a noisy ERROR + traceback for CPCS auth fallback even though
 # legacy login succeeds. Suppress entirely so it doesn't alarm users.
-SILENT_LOGGERS = ("webapi.auth.authentication",)
+SILENT_LOGGERS = ("webapi.auth.authentication", "webapi.webapi")
 
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
