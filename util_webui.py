@@ -38,12 +38,18 @@ class WebUIClient:
         :param username: Admin username.
         :param password: Admin password.
         """
-        from webapi import WebAPI
-        from webapi.auth.authentication import Authentication
-        from webapi.settings.security_cloud_platform.netskope_client.client_configuration import (
-            ClientConfiguration,
-        )
-        from webapi.settings.security_cloud_platform.netskope_client.devices import Devices
+        try:
+            from webapi import WebAPI
+            from webapi.auth.authentication import Authentication
+            from webapi.settings.security_cloud_platform.netskope_client.client_configuration import (
+                ClientConfiguration,
+            )
+            from webapi.settings.security_cloud_platform.netskope_client.devices import Devices
+        except ModuleNotFoundError:
+            raise RuntimeError(
+                "pylark-webapi-lib is not installed. "
+                "Install it with: pip install -e /path/to/pylark-webapi-lib"
+            )
 
         log.info("Connecting to tenant: %s as %s", hostname, username)
         self._webapi = WebAPI(hostname=hostname, username=username, password=password)

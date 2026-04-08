@@ -15,6 +15,10 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 # Third-party loggers to silence
 NOISY_LOGGERS = ("urllib3", "requests", "chardet", "charset_normalizer")
 
+# webapi logs a noisy ERROR + traceback for CPCS auth fallback even though
+# legacy login succeeds. Suppress entirely so it doesn't alarm users.
+SILENT_LOGGERS = ("webapi.auth.authentication",)
+
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
     """
@@ -51,6 +55,8 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     # Quiet noisy third-party loggers
     for name in NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
+    for name in SILENT_LOGGERS:
+        logging.getLogger(name).setLevel(logging.CRITICAL)
 
     tool_logger = logging.getLogger("nsclient_upgrade")
     tool_logger.info("Logging initialized — level=%s, log_file=%s", logging.getLevelName(level), log_file)

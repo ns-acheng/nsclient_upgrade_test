@@ -4,7 +4,12 @@
       "Bash(xargs grep:*)",
       "Bash(ls -la \"c:/git/nsclient_upgrade_test/\"*.py)",
       "Bash(python -m pytest test/ -v)",
-      "Bash(python main.py --help)"
+      "Bash(python main.py --help)",
+      "Bash(python -c \"import webapi\")",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(git check-ignore:*)"
     ]
   }
 }

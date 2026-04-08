@@ -46,6 +46,10 @@ Thumbs.db
 log/*.log
 cache/
 
+# Encrypted password and key — NEVER commit these
+data/.secret.key
+data/.password.enc
+
 # Local environment/config overrides
 .env
 .env.*

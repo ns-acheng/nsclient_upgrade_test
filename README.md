@@ -9,12 +9,27 @@ Netskope Client installation.
 - Python 3.10+
 - Access to a Netskope tenant with admin credentials
 - Netskope Client installed on the test machine
+- `pylark-webapi-lib` — Netskope internal WebUI API library (not included)
 
 ## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
+
+### pylark-webapi-lib (required)
+
+This tool depends on `pylark-webapi-lib` for tenant WebUI API calls. It must be
+installed separately. Clone the repo and install it:
+
+```bash
+git clone <pylark-webapi-lib repo URL>
+pip install -e /path/to/pylark-webapi-lib
+```
+
+If this package is not installed, the tool will show a clear error when you try
+to connect to a tenant. Unit tests do **not** require it — all webapi calls are
+mocked.
 
 ## Usage
 

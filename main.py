@@ -1,10 +1,10 @@
 """
 CLI entry point for the Netskope Client Auto-Upgrade Tool.
 
-First-time setup (saves tenant + username to config, never saves password):
+First-time setup (saves tenant, username, and encrypted password):
     python main.py setup
 
-Then just run (password will be prompted):
+Then just run (uses saved password automatically):
     python main.py versions
     python main.py upgrade --target latest --from-version release-92.0.0
     python main.py upgrade --target golden --golden-index -1 --dot
@@ -18,6 +18,7 @@ from pathlib import Path
 
 from util_config import load_config, save_config, validate_config, ToolConfig
 from util_log import setup_logging
+from util_secret import load_password, save_password
 from util_webui import WebUIClient
 from util_client import LocalClient
 from upgrade_runner import UpgradeRunner, UpgradeResult
@@ -101,10 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_setup(cfg: ToolConfig) -> int:
-    """Interactive setup — save tenant and username to config file."""
+    """Interactive setup — save tenant, username, and encrypted password."""
     print("\n=== Netskope Upgrade Tool Setup ===\n")
     print("  Tenant and username are saved to data/config.json.")
-    print("  Password is NEVER saved — you will be prompted each run.\n")
+    print("  Password is encrypted and saved locally (never in git).\n")
 
     hostname = input(f"  Tenant hostname [{cfg.tenant.hostname or 'e.g. tenant.goskope.com'}]: ").strip()
     if hostname:
@@ -118,9 +119,13 @@ def cmd_setup(cfg: ToolConfig) -> int:
     if platform:
         cfg.client.platform = platform
 
+    password = getpass.getpass("  Admin password  : ").strip()
+    if password:
+        save_password(password)
+        print("  Password encrypted and saved.")
+
     path = save_config(cfg)
-    print(f"\n  Config saved to {path}")
-    print("  Password will be prompted when you run versions/upgrade commands.\n")
+    print(f"\n  Config saved to {path}\n")
     return 0
 
 
@@ -131,21 +136,29 @@ def cmd_versions(cfg: ToolConfig) -> int:
 
     versions = webui.get_release_versions()
 
+    # Keys that are metadata, not version lists
+    skip_keys = {"goldenversions", "latestversion", "versions_upload_timestamp"}
+
     print("\n=== Available Client Release Versions ===\n")
     print(f"  Latest version:    {versions.get('latestversion', 'N/A')}")
 
-    golden = versions.get("goldenversions", [])
-    print(f"  Golden versions:   {', '.join(sorted(golden)) if golden else 'N/A'}")
+    golden = sorted(versions.get("goldenversions", []))
+    if golden:
+        latest_golden = golden[-1]
+        golden_builds = versions.get(latest_golden, [])
+        latest_golden_build = sorted(golden_builds)[-1] if golden_builds else "N/A"
+        print(f"  Golden versions:   {', '.join(golden)}")
+        print(f"  Latest golden build: {latest_golden_build}")
+    else:
+        print(f"  Golden versions:   N/A")
 
     print("\n  All major releases:")
     for key in sorted(versions):
-        if key in ("goldenversions", "latestversion"):
+        if key in skip_keys:
             continue
         dot_releases = versions[key]
         if isinstance(dot_releases, list):
             print(f"    {key}: {', '.join(sorted(dot_releases))}")
-        else:
-            print(f"    {key}: {dot_releases}")
 
     print()
     return 0
@@ -272,12 +285,21 @@ def main() -> int:
     if args.command == "setup":
         return cmd_setup(cfg)
 
-    # For commands that need a tenant, prompt for password if missing
+    # For commands that need a tenant, resolve password:
+    #   1. CLI --password flag  (already in cfg)
+    #   2. Saved encrypted password
+    #   3. Prompt user and save for next time
     require_tenant = args.command in ("versions", "upgrade")
     if require_tenant and cfg.tenant.hostname and cfg.tenant.username and not cfg.tenant.password:
-        cfg.tenant.password = getpass.getpass(
-            f"  Password for {cfg.tenant.username}@{cfg.tenant.hostname}: "
-        )
+        saved = load_password()
+        if saved:
+            cfg.tenant.password = saved
+            log.info("Using saved encrypted password")
+        else:
+            cfg.tenant.password = getpass.getpass(
+                f"  Password for {cfg.tenant.username}@{cfg.tenant.hostname}: "
+            )
+            save_password(cfg.tenant.password)
 
     # Validate config
     errors = validate_config(cfg, require_tenant=require_tenant)
