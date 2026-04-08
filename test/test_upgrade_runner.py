@@ -18,6 +18,7 @@ from upgrade_runner import (
     UpgradeRunner, UpgradeResult, PollResult, RebootVerifyResult,
     BASE_VERSION_DIR, INSTALLER_JSON, REBOOT_TIMING_PRESETS,
 )
+from util_client import ExeValidationResult, UninstallEntryResult
 from util_config import (
     UpgradeConfig, RebootTestState,
     save_reboot_state, load_reboot_state, clear_reboot_state,
@@ -70,6 +71,14 @@ def mock_client() -> MagicMock:
     client.create.return_value = None
     client.sync_config_from_tenant.return_value = None
     client.detect_tenant_from_nsconfig.return_value = None
+    client.create_verify_task.return_value = None
+    client.delete_verify_task.return_value = None
+    client.verify_executables.return_value = ExeValidationResult(
+        valid=True, install_dir="C:\\fake", present=["stAgentSvc.exe"], missing=[], version_mismatches=[],
+    )
+    client.check_uninstall_registry.return_value = UninstallEntryResult(
+        found=True, display_name="Netskope Client", display_version="95.1.0.900", install_location="C:\\fake",
+    )
     return client
 
 
@@ -125,6 +134,7 @@ class TestUpgradeToLatest:
         """Client upgrades to latest version successfully."""
         # Simulate time progression: start=0, then each time() call increments
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+        mock_client.is_service_running.side_effect = [False, True]
 
         # First call returns old version (version_before), then poll reads
         mock_client.get_version.side_effect = [
@@ -175,6 +185,7 @@ class TestUpgradeToLatest:
     ) -> None:
         """Cleanup (disable_auto_upgrade) runs after successful upgrade."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
@@ -223,6 +234,7 @@ class TestUpgradeToGolden:
     ) -> None:
         """Upgrade to latest golden (index=-1) without dot release."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        mock_client.is_service_running.side_effect = [False, True]
 
         # Expected: base of golden 90.0.0 -> sorted[0] = "90.0.0.100"
         mock_client.get_version.side_effect = [
@@ -252,6 +264,7 @@ class TestUpgradeToGolden:
     ) -> None:
         """Upgrade to latest golden with dot release enabled."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        mock_client.is_service_running.side_effect = [False, True]
 
         # Expected: highest dot of 90.0.0 -> sorted[-1] = "90.1.0.300"
         mock_client.get_version.side_effect = [
@@ -281,6 +294,7 @@ class TestUpgradeToGolden:
     ) -> None:
         """When from_version is None, auto-picks an older version."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = ["87.0.0.100", "87.0.0.100", "90.0.0.100"]
         mock_webui.get_device_version.return_value = "90.0.0.100"
 
@@ -311,6 +325,7 @@ class TestUpgradeDisabled:
     ) -> None:
         """Version stays the same when auto-upgrade is disabled."""
         mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.side_effect = [False, True]
 
         # Version never changes
         mock_client.get_version.return_value = "92.0.0.100"
@@ -366,6 +381,7 @@ class TestWebUIVerification:
     ) -> None:
         """WebUI version mismatch is captured in result but doesn't fail the test."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.return_value = "92.0.0.100"  # Stale!
 
@@ -388,6 +404,7 @@ class TestWebUIVerification:
     ) -> None:
         """WebUI query failure doesn't crash the scenario."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.side_effect = Exception("Connection lost")
 
@@ -774,6 +791,7 @@ class TestInitNsclient:
         """When nsclient is missing, falls back to WebUI for version monitoring."""
         mock_time.side_effect = [0, 0.1, 100, 100, 100]
         mock_client.is_initialized = False
+        mock_client.is_service_running.side_effect = [False, True]
         mock_client.create.side_effect = ModuleNotFoundError("No module named 'nsclient'")
         mock_webui.get_device_version.return_value = "92.0.0.100"
 
@@ -802,6 +820,7 @@ class TestPostUpgradeServiceCheck:
     ) -> None:
         """Service running check happens after upgrade completes."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = [
             "92.0.0.100", "92.0.0.100", "95.1.0.900",
         ]
@@ -815,7 +834,7 @@ class TestPostUpgradeServiceCheck:
 
     @patch("upgrade_runner.time.sleep", return_value=None)
     @patch("upgrade_runner.time.time")
-    def test_service_down_after_upgrade_still_reports_result(
+    def test_service_down_after_upgrade_fails_validation(
         self,
         mock_time: MagicMock,
         mock_sleep: MagicMock,
@@ -823,7 +842,7 @@ class TestPostUpgradeServiceCheck:
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
-        """Service down after upgrade logs warning but does not fail the result."""
+        """Service down after upgrade fails pre-report validation."""
         mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.return_value = False
         mock_client.get_version.side_effect = [
@@ -833,9 +852,188 @@ class TestPostUpgradeServiceCheck:
 
         result = runner.run_upgrade_to_latest(from_version="92.0.0")
 
-        # Upgrade itself succeeded — service check is informational
-        assert result.success is True
+        assert result.success is False
+        assert result.service_running is False
         assert result.version_after == "95.1.0.900"
+        assert "service not running" in result.message
+
+
+# ── Pre-Report Validation ──────────────────────────────────────────
+
+
+class TestPreReportValidation:
+    """Tests for exe/registry/service validation in upgrade scenarios."""
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_exe_missing_fails_upgrade(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """Upgrade fails when a required executable is missing."""
+        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.side_effect = [
+            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+        ]
+        mock_webui.get_device_version.return_value = "95.1.0.900"
+        mock_client.verify_executables.return_value = ExeValidationResult(
+            valid=False,
+            install_dir=r"C:\Program Files (x86)\Netskope\STAgent",
+            present=["stAgentSvc.exe"],
+            missing=["stAgentUI.exe"],
+            version_mismatches=[],
+        )
+
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
+
+        assert result.success is False
+        assert result.exe_validation is not None
+        assert "stAgentUI.exe" in result.exe_validation.missing
+        assert "missing exe" in result.message
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_exe_version_mismatch_fails_upgrade(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """Upgrade fails when executable has wrong version."""
+        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.side_effect = [
+            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+        ]
+        mock_webui.get_device_version.return_value = "95.1.0.900"
+        mock_client.verify_executables.return_value = ExeValidationResult(
+            valid=False,
+            install_dir=r"C:\Program Files (x86)\Netskope\STAgent",
+            present=["stAgentSvc.exe", "stAgentUI.exe"],
+            missing=[],
+            version_mismatches=["stAgentSvc.exe: 92.0.0.100 (expected 95.1.0.900)"],
+        )
+
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
+
+        assert result.success is False
+        assert "exe version mismatch" in result.message
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_uninstall_entry_missing_fails_upgrade(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """Upgrade fails when uninstall registry entry is missing."""
+        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.side_effect = [
+            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+        ]
+        mock_webui.get_device_version.return_value = "95.1.0.900"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=False, display_name="", display_version="", install_location="",
+        )
+
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
+
+        assert result.success is False
+        assert result.uninstall_entry is not None
+        assert result.uninstall_entry.found is False
+        assert "uninstall registry entry missing" in result.message
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_all_validation_passes(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """Upgrade succeeds when all validation items pass."""
+        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.side_effect = [
+            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+        ]
+        mock_webui.get_device_version.return_value = "95.1.0.900"
+
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
+
+        assert result.success is True
+        assert result.service_running is True
+        assert result.exe_validation is not None
+        assert result.exe_validation.valid is True
+        assert result.uninstall_entry is not None
+        assert result.uninstall_entry.found is True
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_golden_validation_fails_on_missing_exe(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """Golden upgrade also fails when exe validation fails."""
+        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.side_effect = [
+            "84.0.0.100", "84.0.0.100", "90.0.0.100",
+        ]
+        mock_webui.get_device_version.return_value = "90.0.0.100"
+        mock_client.verify_executables.return_value = ExeValidationResult(
+            valid=False,
+            install_dir=r"C:\Program Files (x86)\Netskope\STAgent",
+            present=["stAgentSvc.exe"],
+            missing=["stAgentUI.exe"],
+            version_mismatches=[],
+        )
+
+        result = runner.run_upgrade_to_golden(dot=False)
+
+        assert result.success is False
+        assert "missing exe" in result.message
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_disabled_validation_fails_on_missing_uninstall(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """Disabled upgrade also fails when uninstall entry is missing."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.side_effect = [False, True]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=False, display_name="", display_version="", install_location="",
+        )
+
+        result = runner.run_upgrade_disabled(from_version="92.0.0")
+
+        assert result.success is False
+        assert "uninstall registry entry missing" in result.message
 
 
 # ── Reboot State Persistence ───────────────────────────────────────
@@ -1253,3 +1451,118 @@ class TestRebootVerify:
         assert result.success is True
         # verify_install_dir called with target_64_bit=True since upgrade completed
         mock_client.verify_install_dir.assert_called_with(True)
+
+    @patch("upgrade_runner.clear_reboot_state")
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_verify_exe_missing_fails(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        mock_clear: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Verify fails when an executable is missing from install dir."""
+        mock_time.side_effect = [0, 0.1, 0.2]
+        state_path = self._write_state(tmp_path)
+        mock_client.get_version.return_value = "95.1.0.900"
+        mock_client.query_service.return_value = MagicMock(
+            name="stAgentSvc", exists=True, state="RUNNING",
+        )
+        mock_client.query_service_binpath.return_value = (
+            r'"C:\Program Files (x86)\Netskope\STAgent\stwatchdog.exe"'
+        )
+        mock_client.verify_install_dir.return_value = True
+        mock_client.get_install_dir.return_value = Path(
+            r"C:\Program Files (x86)\Netskope\STAgent"
+        )
+        mock_client.verify_executables.return_value = ExeValidationResult(
+            valid=False,
+            install_dir=r"C:\Program Files (x86)\Netskope\STAgent",
+            present=["stAgentSvc.exe"],
+            missing=["stAgentUI.exe"],
+            version_mismatches=[],
+        )
+
+        result = runner.run_reboot_verify(state_path=state_path)
+
+        assert result.success is False
+        assert "missing exe" in result.message.lower()
+        assert result.exe_validation is not None
+        assert "stAgentUI.exe" in result.exe_validation.missing
+
+    @patch("upgrade_runner.clear_reboot_state")
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_verify_exe_version_mismatch_fails(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        mock_clear: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Verify fails when an executable has wrong version."""
+        mock_time.side_effect = [0, 0.1, 0.2]
+        state_path = self._write_state(tmp_path)
+        mock_client.get_version.return_value = "95.1.0.900"
+        mock_client.query_service.return_value = MagicMock(
+            name="stAgentSvc", exists=True, state="RUNNING",
+        )
+        mock_client.query_service_binpath.return_value = (
+            r'"C:\Program Files (x86)\Netskope\STAgent\stwatchdog.exe"'
+        )
+        mock_client.verify_install_dir.return_value = True
+        mock_client.get_install_dir.return_value = Path(
+            r"C:\Program Files (x86)\Netskope\STAgent"
+        )
+        mock_client.verify_executables.return_value = ExeValidationResult(
+            valid=False,
+            install_dir=r"C:\Program Files (x86)\Netskope\STAgent",
+            present=["stAgentSvc.exe", "stAgentUI.exe"],
+            missing=[],
+            version_mismatches=["stAgentSvc.exe: 92.0.0.100 (expected 95.1.0.900)"],
+        )
+
+        result = runner.run_reboot_verify(state_path=state_path)
+
+        assert result.success is False
+        assert "exe version mismatch" in result.message.lower()
+
+    @patch("upgrade_runner.clear_reboot_state")
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_verify_uninstall_entry_missing_fails(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        mock_clear: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Verify fails when uninstall registry entry is missing."""
+        mock_time.side_effect = [0, 0.1, 0.2]
+        state_path = self._write_state(tmp_path)
+        mock_client.get_version.return_value = "95.1.0.900"
+        mock_client.query_service.return_value = MagicMock(
+            name="stAgentSvc", exists=True, state="RUNNING",
+        )
+        mock_client.query_service_binpath.return_value = (
+            r'"C:\Program Files (x86)\Netskope\STAgent\stwatchdog.exe"'
+        )
+        mock_client.verify_install_dir.return_value = True
+        mock_client.get_install_dir.return_value = Path(
+            r"C:\Program Files (x86)\Netskope\STAgent"
+        )
+        mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
+            found=False, display_name="", display_version="", install_location="",
+        )
+
+        result = runner.run_reboot_verify(state_path=state_path)
+
+        assert result.success is False
+        assert "uninstall registry entry missing" in result.message.lower()

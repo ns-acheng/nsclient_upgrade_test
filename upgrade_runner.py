@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from util_client import LocalClient, SERVICES
+from util_client import (
+    LocalClient, SERVICES,
+    ExeValidationResult, UninstallEntryResult,
+)
 from util_config import (
     UpgradeConfig, RebootTestState,
     save_reboot_state, load_reboot_state, clear_reboot_state,
@@ -37,6 +40,9 @@ class UpgradeResult:
     webui_version: str
     elapsed_seconds: float
     message: str
+    service_running: bool = True
+    exe_validation: Optional[ExeValidationResult] = None
+    uninstall_entry: Optional[UninstallEntryResult] = None
 
 
 @dataclass
@@ -69,6 +75,8 @@ class RebootVerifyResult:
     watchdog_binpath: str
     watchdog_binpath_valid: bool
     install_dir_valid: bool
+    exe_validation: Optional[ExeValidationResult]
+    uninstall_entry: Optional[UninstallEntryResult]
     elapsed_seconds: float
     message: str
 
@@ -166,25 +174,31 @@ class UpgradeRunner:
             self.webui.set_upgrade_schedule(
                 minutes_from_now=2, search_config=self.config_name,
             )
-            if nsclient_ok:
-                self.client.update_config(wait_seconds=self.cfg.config_update_wait_seconds)
-            else:
-                log.info("Skipping local config pull (nsclient not available)")
+            self.client.sync_config_from_tenant(
+                is_64_bit=self.is_64_bit, wait_seconds=10,
+            )
 
             # Poll for upgrade
             poll = self._wait_for_upgrade(expected_version=expected)
             version_after = poll.final_version
 
             # Post-upgrade checks
-            self._verify_service_running()
+            service_running = self._verify_service_running()
+            validation_ok, exe_validation, uninstall_entry = (
+                self._validate_pre_report(version_after)
+            )
             webui_version = self._verify_webui_version(version_after)
 
             elapsed = time.time() - start_time
-            success = version_after == expected
+            version_ok = version_after == expected
+            success = version_ok and service_running and validation_ok
             message = (
                 f"Upgrade successful: {version_before} -> {version_after}"
-                if success
+                if version_ok
                 else f"Upgrade FAILED: expected {expected}, got {version_after}"
+            )
+            message += self._format_validation_issues(
+                service_running, exe_validation, uninstall_entry,
             )
             log.info(message)
 
@@ -197,6 +211,9 @@ class UpgradeRunner:
                 webui_version=webui_version,
                 elapsed_seconds=elapsed,
                 message=message,
+                service_running=service_running,
+                exe_validation=exe_validation,
+                uninstall_entry=uninstall_entry,
             )
 
         except Exception as exc:
@@ -211,6 +228,7 @@ class UpgradeRunner:
                 webui_version="unknown",
                 elapsed_seconds=elapsed,
                 message=f"Exception: {exc}",
+                service_running=False,
             )
         finally:
             self._cleanup()
@@ -289,25 +307,31 @@ class UpgradeRunner:
             self.webui.set_upgrade_schedule(
                 minutes_from_now=2, search_config=self.config_name,
             )
-            if nsclient_ok:
-                self.client.update_config(wait_seconds=self.cfg.config_update_wait_seconds)
-            else:
-                log.info("Skipping local config pull (nsclient not available)")
+            self.client.sync_config_from_tenant(
+                is_64_bit=self.is_64_bit, wait_seconds=10,
+            )
 
             # Poll for upgrade
             poll = self._wait_for_upgrade(expected_version=expected)
             version_after = poll.final_version
 
             # Post-upgrade checks
-            self._verify_service_running()
+            service_running = self._verify_service_running()
+            validation_ok, exe_validation, uninstall_entry = (
+                self._validate_pre_report(version_after)
+            )
             webui_version = self._verify_webui_version(version_after)
 
             elapsed = time.time() - start_time
-            success = version_after == expected
+            version_ok = version_after == expected
+            success = version_ok and service_running and validation_ok
             message = (
                 f"Golden upgrade successful: {version_before} -> {version_after}"
-                if success
+                if version_ok
                 else f"Golden upgrade FAILED: expected {expected}, got {version_after}"
+            )
+            message += self._format_validation_issues(
+                service_running, exe_validation, uninstall_entry,
             )
             log.info(message)
 
@@ -320,6 +344,9 @@ class UpgradeRunner:
                 webui_version=webui_version,
                 elapsed_seconds=elapsed,
                 message=message,
+                service_running=service_running,
+                exe_validation=exe_validation,
+                uninstall_entry=uninstall_entry,
             )
 
         except Exception as exc:
@@ -334,6 +361,7 @@ class UpgradeRunner:
                 webui_version="unknown",
                 elapsed_seconds=elapsed,
                 message=f"Exception: {exc}",
+                service_running=False,
             )
         finally:
             self._cleanup()
@@ -394,18 +422,25 @@ class UpgradeRunner:
             )
             version_after = poll.final_version
 
-            # Post-upgrade checks
-            self._verify_service_running()
+            # Post checks
+            service_running = self._verify_service_running()
+            validation_ok, exe_validation, uninstall_entry = (
+                self._validate_pre_report(version_after)
+            )
             webui_version = self._verify_webui_version(version_after)
 
             elapsed = time.time() - start_time
-            success = version_before == version_after
+            version_ok = version_before == version_after
+            success = version_ok and service_running and validation_ok
             message = (
                 f"Correctly stayed at {version_before} — auto-upgrade disabled works"
-                if success
+                if version_ok
                 else (
                     f"UNEXPECTED upgrade occurred: {version_before} -> {version_after}"
                 )
+            )
+            message += self._format_validation_issues(
+                service_running, exe_validation, uninstall_entry,
             )
             log.info(message)
 
@@ -418,6 +453,9 @@ class UpgradeRunner:
                 webui_version=webui_version,
                 elapsed_seconds=elapsed,
                 message=message,
+                service_running=service_running,
+                exe_validation=exe_validation,
+                uninstall_entry=uninstall_entry,
             )
 
         except Exception as exc:
@@ -432,6 +470,7 @@ class UpgradeRunner:
                 webui_version="unknown",
                 elapsed_seconds=elapsed,
                 message=f"Exception: {exc}",
+                service_running=False,
             )
         finally:
             self._cleanup()
@@ -755,6 +794,62 @@ class UpgradeRunner:
             log.warning("Failed to verify WebUI version: %s", exc)
             return "error"
 
+    def _validate_pre_report(
+        self,
+        version_after: str,
+    ) -> tuple[bool, ExeValidationResult, UninstallEntryResult]:
+        """
+        Run pre-report validation: executables and uninstall registry.
+
+        Called after upgrade polling completes but before the final
+        result is assembled. Checks:
+        1. Required executables exist in the correct architecture
+           path with the expected version.
+        2. Windows uninstall registry entry exists.
+
+        :param version_after: The version to validate against.
+        :return: (all_valid, exe_result, uninstall_result).
+        """
+        exe_validation = self.client.verify_executables(
+            is_64_bit=self.is_64_bit,
+            expected_version=version_after,
+        )
+        if not exe_validation.valid:
+            log.warning(
+                "Pre-report exe validation failed: missing=%s, mismatches=%s",
+                exe_validation.missing, exe_validation.version_mismatches,
+            )
+
+        uninstall_entry = self.client.check_uninstall_registry()
+        if not uninstall_entry.found:
+            log.warning("Pre-report validation: uninstall registry entry not found")
+
+        valid = exe_validation.valid and uninstall_entry.found
+        return valid, exe_validation, uninstall_entry
+
+    @staticmethod
+    def _format_validation_issues(
+        service_running: bool,
+        exe_validation: Optional[ExeValidationResult],
+        uninstall_entry: Optional[UninstallEntryResult],
+    ) -> str:
+        """Build a suffix string listing validation issues, if any."""
+        issues: list[str] = []
+        if not service_running:
+            issues.append("service not running")
+        if exe_validation and not exe_validation.valid:
+            if exe_validation.missing:
+                issues.append(f"missing exe: {', '.join(exe_validation.missing)}")
+            if exe_validation.version_mismatches:
+                issues.append(
+                    f"exe version mismatch: {', '.join(exe_validation.version_mismatches)}"
+                )
+        if uninstall_entry and not uninstall_entry.found:
+            issues.append("uninstall registry entry missing")
+        if issues:
+            return f" — ISSUES: {', '.join(issues)}"
+        return ""
+
     def _sync_and_detect_config(self) -> None:
         """
         Sync config from tenant and re-detect config_name.
@@ -853,12 +948,9 @@ class UpgradeRunner:
             self.webui.set_upgrade_schedule(
                 minutes_from_now=2, search_config=self.config_name,
             )
-            if nsclient_ok:
-                self.client.update_config(
-                    wait_seconds=self.cfg.config_update_wait_seconds,
-                )
-            else:
-                log.info("Skipping local config pull (nsclient not available)")
+            self.client.sync_config_from_tenant(
+                is_64_bit=t64, wait_seconds=10,
+            )
 
             # Save state for verify phase
             from datetime import datetime
@@ -876,6 +968,9 @@ class UpgradeRunner:
             )
             save_reboot_state(state)
             log.info("Reboot state saved — ready for reboot")
+
+            # Create Task Scheduler entry for auto-verify after logon
+            self.client.create_verify_task()
 
             # Resolve reboot delay
             if reboot_timing in REBOOT_TIMING_PRESETS:
@@ -902,7 +997,7 @@ class UpgradeRunner:
                 elapsed_seconds=elapsed,
                 message=(
                     f"Setup complete — reboot in {delay}s. "
-                    f"Run 'reboot-verify' after reboot."
+                    f"Verify will run automatically 30s after logon."
                 ),
             )
 
@@ -953,6 +1048,8 @@ class UpgradeRunner:
                 watchdog_binpath="",
                 watchdog_binpath_valid=False,
                 install_dir_valid=False,
+                exe_validation=None,
+                uninstall_entry=None,
                 elapsed_seconds=time.time() - start_time,
                 message="No reboot state file found — run 'reboot-setup' first",
             )
@@ -1019,6 +1116,23 @@ class UpgradeRunner:
                 expected_dir, watchdog_binpath,
             )
 
+        # ── Executable validation ───────────────────────────────────
+        exe_version = version_after if upgrade_completed else state.version_before
+        exe_validation = self.client.verify_executables(
+            is_64_bit=active_64_bit,
+            expected_version=exe_version,
+        )
+        if not exe_validation.valid:
+            log.warning(
+                "Executable validation failed: missing=%s, mismatches=%s",
+                exe_validation.missing, exe_validation.version_mismatches,
+            )
+
+        # ── Uninstall registry entry ───────────────────────────────
+        uninstall_entry = self.client.check_uninstall_registry()
+        if not uninstall_entry.found:
+            log.warning("Uninstall registry entry not found")
+
         # ── Determine overall success ───────────────────────────────
         has_valid_version = upgrade_completed or rolled_back
         success = (
@@ -1026,6 +1140,8 @@ class UpgradeRunner:
             and all_services_ok
             and watchdog_binpath_valid
             and install_dir_valid
+            and exe_validation.valid
+            and uninstall_entry.found
         )
 
         # Build message
@@ -1046,6 +1162,13 @@ class UpgradeRunner:
             issues.append("watchdog binpath invalid")
         if not install_dir_valid:
             issues.append("install dir invalid")
+        if not exe_validation.valid:
+            if exe_validation.missing:
+                issues.append(f"missing exe: {', '.join(exe_validation.missing)}")
+            if exe_validation.version_mismatches:
+                issues.append(f"exe version mismatch: {', '.join(exe_validation.version_mismatches)}")
+        if not uninstall_entry.found:
+            issues.append("uninstall registry entry missing")
         if not has_valid_version:
             issues.append("unexpected version")
 
@@ -1056,8 +1179,9 @@ class UpgradeRunner:
         elapsed = time.time() - start_time
         log.info("Verify result: success=%s — %s", success, message)
 
-        # Clean up state file on completion
+        # Clean up state file and scheduled task
         clear_reboot_state(path=state_path)
+        self.client.delete_verify_task()
 
         return RebootVerifyResult(
             success=success,
@@ -1071,6 +1195,8 @@ class UpgradeRunner:
             watchdog_binpath=watchdog_binpath,
             watchdog_binpath_valid=watchdog_binpath_valid,
             install_dir_valid=install_dir_valid,
+            exe_validation=exe_validation,
+            uninstall_entry=uninstall_entry,
             elapsed_seconds=elapsed,
             message=message,
         )

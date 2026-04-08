@@ -14,7 +14,10 @@ import pytest
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from util_client import LocalClient, NsConfigInfo, ServiceInfo, INSTALL_DIR_32, INSTALL_DIR_64
+from util_client import (
+    LocalClient, NsConfigInfo, ServiceInfo, ExeValidationResult, UninstallEntryResult,
+    INSTALL_DIR_32, INSTALL_DIR_64, REQUIRED_EXECUTABLES, WATCHDOG_EXECUTABLE,
+)
 
 
 # ── detect_tenant_from_nsconfig ────────────────────────────────────
@@ -246,3 +249,263 @@ class TestInstallDirHelpers:
         """Returns False when stAgentSvc.exe is missing."""
         with patch("util_client.INSTALL_DIR_64", tmp_path):
             assert LocalClient.verify_install_dir(True) is False
+
+
+# ── Watchdog mode detection ─────────────────────────────────────────
+
+
+class TestIsWatchdogMode:
+    """Tests for is_watchdog_mode reading nsconfig.json."""
+
+    def test_watchdog_enabled(self, tmp_path: Path) -> None:
+        """Returns True when nsclient_watchdog_monitor is true."""
+        cfg = {"nsclient_watchdog_monitor": True}
+        config_file = tmp_path / "nsconfig.json"
+        config_file.write_text(json.dumps(cfg), encoding="utf-8")
+
+        assert LocalClient.is_watchdog_mode(nsconfig_path=config_file) is True
+
+    def test_watchdog_disabled(self, tmp_path: Path) -> None:
+        """Returns False when nsclient_watchdog_monitor is false."""
+        cfg = {"nsclient_watchdog_monitor": False}
+        config_file = tmp_path / "nsconfig.json"
+        config_file.write_text(json.dumps(cfg), encoding="utf-8")
+
+        assert LocalClient.is_watchdog_mode(nsconfig_path=config_file) is False
+
+    def test_watchdog_key_missing(self, tmp_path: Path) -> None:
+        """Returns False when key is absent."""
+        cfg = {"other": "value"}
+        config_file = tmp_path / "nsconfig.json"
+        config_file.write_text(json.dumps(cfg), encoding="utf-8")
+
+        assert LocalClient.is_watchdog_mode(nsconfig_path=config_file) is False
+
+    def test_file_missing(self, tmp_path: Path) -> None:
+        """Returns False when nsconfig.json does not exist."""
+        assert LocalClient.is_watchdog_mode(nsconfig_path=tmp_path / "missing.json") is False
+
+
+# ── Executable validation ───────────────────────────────────────────
+
+
+class TestVerifyExecutables:
+    """Tests for verify_executables — checks exe presence and version."""
+
+    def test_all_present_correct_version(self, tmp_path: Path) -> None:
+        """All required executables present with correct version."""
+        for exe in REQUIRED_EXECUTABLES:
+            (tmp_path / exe).touch()
+
+        nsconfig = tmp_path / "nsconfig.json"
+        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+
+        with patch("util_client.INSTALL_DIR_32", tmp_path), \
+             patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"):
+            result = LocalClient.verify_executables(
+                is_64_bit=False, expected_version="95.1.0.900",
+                nsconfig_path=nsconfig,
+            )
+
+        assert result.valid is True
+        assert len(result.missing) == 0
+        assert len(result.version_mismatches) == 0
+
+    def test_missing_executable(self, tmp_path: Path) -> None:
+        """Reports missing when stAgentUI.exe is absent."""
+        (tmp_path / "stAgentSvc.exe").touch()
+        # stAgentUI.exe not created
+
+        nsconfig = tmp_path / "nsconfig.json"
+        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+
+        with patch("util_client.INSTALL_DIR_64", tmp_path):
+            result = LocalClient.verify_executables(
+                is_64_bit=True, expected_version="95.1.0.900",
+                nsconfig_path=nsconfig,
+            )
+
+        assert result.valid is False
+        assert "stAgentUI.exe" in result.missing
+
+    def test_watchdog_mode_checks_svcmon(self, tmp_path: Path) -> None:
+        """In watchdog mode, stAgentSvcMon.exe is also required."""
+        for exe in REQUIRED_EXECUTABLES:
+            (tmp_path / exe).touch()
+        # stAgentSvcMon.exe not created
+
+        nsconfig = tmp_path / "nsconfig.json"
+        nsconfig.write_text('{"nsclient_watchdog_monitor": true}', encoding="utf-8")
+
+        with patch("util_client.INSTALL_DIR_32", tmp_path), \
+             patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"):
+            result = LocalClient.verify_executables(
+                is_64_bit=False, expected_version="95.1.0.900",
+                nsconfig_path=nsconfig,
+            )
+
+        assert result.valid is False
+        assert WATCHDOG_EXECUTABLE in result.missing
+
+    def test_watchdog_mode_all_present(self, tmp_path: Path) -> None:
+        """In watchdog mode, passes when all 3 executables present."""
+        for exe in REQUIRED_EXECUTABLES:
+            (tmp_path / exe).touch()
+        (tmp_path / WATCHDOG_EXECUTABLE).touch()
+
+        nsconfig = tmp_path / "nsconfig.json"
+        nsconfig.write_text('{"nsclient_watchdog_monitor": true}', encoding="utf-8")
+
+        with patch("util_client.INSTALL_DIR_32", tmp_path), \
+             patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"):
+            result = LocalClient.verify_executables(
+                is_64_bit=False, expected_version="95.1.0.900",
+                nsconfig_path=nsconfig,
+            )
+
+        assert result.valid is True
+        assert WATCHDOG_EXECUTABLE in result.present
+
+    def test_version_mismatch(self, tmp_path: Path) -> None:
+        """Reports version mismatch when exe has wrong version."""
+        for exe in REQUIRED_EXECUTABLES:
+            (tmp_path / exe).touch()
+
+        nsconfig = tmp_path / "nsconfig.json"
+        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+
+        with patch("util_client.INSTALL_DIR_32", tmp_path), \
+             patch.object(LocalClient, "get_file_version", return_value="92.0.0.100"):
+            result = LocalClient.verify_executables(
+                is_64_bit=False, expected_version="95.1.0.900",
+                nsconfig_path=nsconfig,
+            )
+
+        assert result.valid is False
+        assert len(result.version_mismatches) > 0
+
+
+# ── Uninstall registry entry ───────────────────────────────────────
+
+
+class TestCheckUninstallRegistry:
+    """Tests for check_uninstall_registry — mocked winreg."""
+
+    def test_entry_found(self) -> None:
+        """Returns found=True when Netskope Client entry exists."""
+        import winreg
+
+        mock_subkey = MagicMock()
+        mock_subkey.__enter__ = MagicMock(return_value=mock_subkey)
+        mock_subkey.__exit__ = MagicMock(return_value=False)
+
+        def query_value(key: MagicMock, name: str) -> tuple:
+            values = {
+                "DisplayName": ("Netskope Client", 1),
+                "DisplayVersion": ("95.1.0.900", 1),
+                "InstallLocation": (r"C:\Program Files (x86)\Netskope\STAgent", 1),
+            }
+            if name in values:
+                return values[name]
+            raise FileNotFoundError
+
+        mock_parent = MagicMock()
+        mock_parent.__enter__ = MagicMock(return_value=mock_parent)
+        mock_parent.__exit__ = MagicMock(return_value=False)
+
+        def open_key(hkey: int, path: str) -> MagicMock:
+            return mock_parent
+
+        with patch("winreg.OpenKey", side_effect=[mock_parent, mock_subkey]), \
+             patch("winreg.EnumKey", side_effect=["NetskopeClient", OSError]), \
+             patch("winreg.QueryValueEx", side_effect=query_value):
+            result = LocalClient.check_uninstall_registry()
+
+        assert result.found is True
+        assert "Netskope" in result.display_name
+        assert result.display_version == "95.1.0.900"
+
+    def test_entry_not_found(self) -> None:
+        """Returns found=False when no matching entry exists."""
+        mock_parent = MagicMock()
+        mock_parent.__enter__ = MagicMock(return_value=mock_parent)
+        mock_parent.__exit__ = MagicMock(return_value=False)
+
+        with patch("winreg.OpenKey", return_value=mock_parent), \
+             patch("winreg.EnumKey", side_effect=OSError):
+            result = LocalClient.check_uninstall_registry()
+
+        assert result.found is False
+
+
+# ── Task Scheduler for Reboot-Verify ───────────────────────────────
+
+
+class TestCreateVerifyTask:
+    """Tests for create_verify_task / delete_verify_task."""
+
+    @patch("util_client.subprocess.run")
+    def test_creates_bat_and_scheduled_task(
+        self, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Writes .bat file and calls schtasks /create."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="SUCCESS")
+        bat = tmp_path / "reboot_verify.bat"
+
+        LocalClient.create_verify_task(bat_path=bat, task_name="TestTask")
+
+        assert bat.is_file()
+        content = bat.read_text(encoding="utf-8")
+        assert "main.py reboot-verify" in content
+        assert "pause" in content
+
+        # schtasks was called with ONLOGON trigger and 30s delay
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "schtasks" in cmd
+        assert "ONLOGON" in cmd
+        assert "0000:30" in cmd
+        assert "TestTask" in cmd
+
+    @patch("util_client.subprocess.run")
+    def test_create_raises_on_schtasks_failure(
+        self, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Raises RuntimeError when schtasks fails."""
+        mock_run.return_value = MagicMock(
+            returncode=1, stderr="Access denied",
+        )
+        bat = tmp_path / "reboot_verify.bat"
+
+        with pytest.raises(RuntimeError, match="Access denied"):
+            LocalClient.create_verify_task(bat_path=bat, task_name="TestTask")
+
+    @patch("util_client.subprocess.run")
+    def test_delete_removes_task_and_bat(
+        self, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Deletes scheduled task and batch file."""
+        mock_run.return_value = MagicMock(returncode=0)
+        bat = tmp_path / "reboot_verify.bat"
+        bat.write_text("@echo test", encoding="utf-8")
+
+        LocalClient.delete_verify_task(bat_path=bat, task_name="TestTask")
+
+        assert not bat.is_file()
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "schtasks" in cmd
+        assert "/delete" in cmd
+        assert "TestTask" in cmd
+
+    @patch("util_client.subprocess.run")
+    def test_delete_no_error_when_missing(
+        self, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """No error when task and bat don't exist."""
+        mock_run.return_value = MagicMock(returncode=1, stderr="not found")
+
+        LocalClient.delete_verify_task(
+            bat_path=tmp_path / "missing.bat",
+            task_name="TestTask",
+        )

@@ -471,6 +471,29 @@ def _print_reboot_verify_result(result: RebootVerifyResult) -> None:
         state_str = info.get("state", "N/A")
         exists_str = "yes" if info.get("exists") else "NO"
         print(f"    {role:10s} ({info.get('name', '?')}): exists={exists_str}, state={state_str}")
+    # Executable validation
+    exe = result.exe_validation
+    if exe:
+        exe_icon = "PASS" if exe.valid else "FAIL"
+        print(f"  Executables [{exe_icon}]:    dir={exe.install_dir}")
+        if exe.present:
+            print(f"    Present:    {', '.join(exe.present)}")
+        if exe.missing:
+            print(f"    MISSING:    {', '.join(exe.missing)}")
+        if exe.version_mismatches:
+            for m in exe.version_mismatches:
+                print(f"    MISMATCH:   {m}")
+    # Uninstall registry entry
+    unreg = result.uninstall_entry
+    if unreg:
+        unreg_icon = "PASS" if unreg.found else "FAIL"
+        print(f"  Uninstall entry [{unreg_icon}]:")
+        if unreg.found:
+            print(f"    Name:       {unreg.display_name}")
+            print(f"    Version:    {unreg.display_version}")
+            print(f"    Location:   {unreg.install_location}")
+        else:
+            print(f"    Not found in registry")
     print(f"  Elapsed:              {result.elapsed_seconds:.1f}s")
     print(f"  Message:              {result.message}")
     print()
@@ -486,6 +509,31 @@ def _print_result(result: UpgradeResult) -> None:
     print(f"  Version after:     {result.version_after}")
     print(f"  Expected version:  {result.expected_version}")
     print(f"  WebUI version:     {result.webui_version}")
+    svc_icon = "PASS" if result.service_running else "FAIL"
+    print(f"  Service running:   [{svc_icon}]")
+    # Executable validation
+    exe = result.exe_validation
+    if exe:
+        exe_icon = "PASS" if exe.valid else "FAIL"
+        print(f"  Executables [{exe_icon}]:  dir={exe.install_dir}")
+        if exe.present:
+            print(f"    Present:         {', '.join(exe.present)}")
+        if exe.missing:
+            print(f"    MISSING:         {', '.join(exe.missing)}")
+        if exe.version_mismatches:
+            for m in exe.version_mismatches:
+                print(f"    MISMATCH:        {m}")
+    # Uninstall registry entry
+    unreg = result.uninstall_entry
+    if unreg:
+        unreg_icon = "PASS" if unreg.found else "FAIL"
+        print(f"  Uninstall entry [{unreg_icon}]:")
+        if unreg.found:
+            print(f"    Name:            {unreg.display_name}")
+            print(f"    Version:         {unreg.display_version}")
+            print(f"    Location:        {unreg.install_location}")
+        else:
+            print(f"    Not found in registry")
     print(f"  Elapsed:           {result.elapsed_seconds:.1f}s")
     print(f"  Message:           {result.message}")
     print()

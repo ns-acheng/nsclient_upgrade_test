@@ -9,6 +9,7 @@ imported without nsclient installed (e.g. during testing or --help).
 import json
 import logging
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,26 @@ SERVICES: dict[str, str] = {
     "driver":   "stadrv",
 }
 
+# Key executables that must exist in the install directory
+REQUIRED_EXECUTABLES: list[str] = [
+    "stAgentSvc.exe",
+    "stAgentUI.exe",
+]
+
+# Additional executable required only in watchdog mode
+WATCHDOG_EXECUTABLE = "stAgentSvcMon.exe"
+
+# Registry paths for Netskope uninstall entry
+UNINSTALL_REG_PATHS: list[str] = [
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+]
+UNINSTALL_DISPLAY_NAME = "Netskope Client"
+
+# Task Scheduler for reboot-verify
+VERIFY_TASK_NAME = "NsClientRebootVerify"
+VERIFY_BAT_PATH = Path(__file__).parent / "data" / "reboot_verify.bat"
+
 
 @dataclass
 class ServiceInfo:
@@ -34,6 +55,25 @@ class ServiceInfo:
     name: str
     exists: bool
     state: str
+
+
+@dataclass
+class ExeValidationResult:
+    """Result of executable validation in the install directory."""
+    valid: bool
+    install_dir: str
+    present: list[str]
+    missing: list[str]
+    version_mismatches: list[str]
+
+
+@dataclass
+class UninstallEntryResult:
+    """Result of checking the Windows uninstall registry entry."""
+    found: bool
+    display_name: str
+    display_version: str
+    install_location: str
 
 
 @dataclass
@@ -483,3 +523,274 @@ class LocalClient:
         else:
             log.warning("Install dir missing or incomplete: %s", install_dir)
         return exists
+
+    # ── Pre-Report Validation ──────────────────────────────────────
+
+    @staticmethod
+    def is_watchdog_mode(nsconfig_path: Path | None = None) -> bool:
+        """
+        Check if the client is in watchdog mode by reading
+        ``nsclient_watchdog_monitor`` from nsconfig.json.
+
+        :param nsconfig_path: Override path (for testing).
+        :return: True if watchdog monitor is enabled.
+        """
+        path = nsconfig_path or LocalClient.NSCONFIG_PATH
+        if not path.is_file():
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            return bool(config.get("nsclient_watchdog_monitor", False))
+        except Exception as exc:
+            log.warning("Failed to read watchdog mode from nsconfig: %s", exc)
+            return False
+
+    @staticmethod
+    def get_file_version(file_path: Path) -> str:
+        """
+        Get the product version of a Windows executable via PowerShell.
+
+        :param file_path: Path to the .exe file.
+        :return: Version string (e.g. '95.1.0.900'), or empty on failure.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    f"(Get-Item '{file_path}').VersionInfo.ProductVersion",
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except Exception as exc:
+            log.warning("Failed to get version of %s: %s", file_path, exc)
+            return ""
+
+    @staticmethod
+    def verify_executables(
+        is_64_bit: bool,
+        expected_version: str,
+        nsconfig_path: Path | None = None,
+    ) -> ExeValidationResult:
+        """
+        Verify that required executables exist in the correct install
+        directory, are the expected version, and include the watchdog
+        monitor executable if watchdog mode is enabled.
+
+        :param is_64_bit: Expected bitness (determines install directory).
+        :param expected_version: Expected product version string.
+        :param nsconfig_path: Override nsconfig path (for testing).
+        :return: ExeValidationResult with details.
+        """
+        install_dir = LocalClient.get_install_dir(is_64_bit)
+        watchdog = LocalClient.is_watchdog_mode(nsconfig_path)
+
+        exe_list = list(REQUIRED_EXECUTABLES)
+        if watchdog:
+            exe_list.append(WATCHDOG_EXECUTABLE)
+
+        present: list[str] = []
+        missing: list[str] = []
+        version_mismatches: list[str] = []
+
+        for exe_name in exe_list:
+            exe_path = install_dir / exe_name
+            if not exe_path.is_file():
+                missing.append(exe_name)
+                log.warning("Missing executable: %s", exe_path)
+                continue
+            present.append(exe_name)
+            file_ver = LocalClient.get_file_version(exe_path)
+            if file_ver and file_ver != expected_version:
+                version_mismatches.append(
+                    f"{exe_name}: {file_ver} (expected {expected_version})"
+                )
+                log.warning(
+                    "Version mismatch: %s is %s, expected %s",
+                    exe_name, file_ver, expected_version,
+                )
+            elif file_ver:
+                log.info("Verified %s version: %s", exe_name, file_ver)
+
+        valid = len(missing) == 0 and len(version_mismatches) == 0
+        if valid:
+            log.info(
+                "All executables verified in %s (watchdog_mode=%s)",
+                install_dir, watchdog,
+            )
+
+        return ExeValidationResult(
+            valid=valid,
+            install_dir=str(install_dir),
+            present=present,
+            missing=missing,
+            version_mismatches=version_mismatches,
+        )
+
+    @staticmethod
+    def check_uninstall_registry() -> UninstallEntryResult:
+        """
+        Check if the Netskope Client uninstall entry exists in the
+        Windows registry (Add/Remove Programs).
+
+        Searches both native and WOW6432Node uninstall paths.
+
+        :return: UninstallEntryResult with entry details.
+        """
+        import winreg
+
+        for reg_path in UNINSTALL_REG_PATHS:
+            try:
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE, reg_path,
+                ) as parent_key:
+                    i = 0
+                    while True:
+                        try:
+                            subkey_name = winreg.EnumKey(parent_key, i)
+                            with winreg.OpenKey(
+                                parent_key, subkey_name,
+                            ) as subkey:
+                                try:
+                                    display_name, _ = winreg.QueryValueEx(
+                                        subkey, "DisplayName",
+                                    )
+                                except FileNotFoundError:
+                                    i += 1
+                                    continue
+                                if UNINSTALL_DISPLAY_NAME.lower() in str(display_name).lower():
+                                    display_ver = ""
+                                    install_loc = ""
+                                    try:
+                                        display_ver, _ = winreg.QueryValueEx(
+                                            subkey, "DisplayVersion",
+                                        )
+                                    except FileNotFoundError:
+                                        pass
+                                    try:
+                                        install_loc, _ = winreg.QueryValueEx(
+                                            subkey, "InstallLocation",
+                                        )
+                                    except FileNotFoundError:
+                                        pass
+                                    log.info(
+                                        "Found uninstall entry: %s v%s at %s",
+                                        display_name, display_ver, install_loc,
+                                    )
+                                    return UninstallEntryResult(
+                                        found=True,
+                                        display_name=str(display_name),
+                                        display_version=str(display_ver),
+                                        install_location=str(install_loc),
+                                    )
+                            i += 1
+                        except OSError:
+                            break
+            except OSError:
+                continue
+
+        log.warning("No Netskope Client uninstall entry found in registry")
+        return UninstallEntryResult(
+            found=False,
+            display_name="",
+            display_version="",
+            install_location="",
+        )
+
+    # ── Task Scheduler for Reboot-Verify ───────────────────────────
+
+    @staticmethod
+    def create_verify_task(
+        bat_path: Path | None = None,
+        task_name: str | None = None,
+    ) -> None:
+        """
+        Create a Windows Task Scheduler task that runs ``reboot-verify``
+        after user logon with a 30-second delay.
+
+        Writes a batch file that runs ``python main.py reboot-verify``
+        in the project directory, then registers it with ``schtasks``.
+
+        :param bat_path: Override path for the .bat file (for testing).
+        :param task_name: Override task name (for testing).
+        """
+        bat = bat_path or VERIFY_BAT_PATH
+        name = task_name or VERIFY_TASK_NAME
+        project_dir = Path(__file__).parent
+        python_exe = sys.executable
+
+        # Write batch file
+        bat.parent.mkdir(parents=True, exist_ok=True)
+        bat_content = (
+            "@echo off\r\n"
+            f'cd /d "{project_dir}"\r\n'
+            "echo ============================================\r\n"
+            "echo  Netskope Client Reboot-Verify\r\n"
+            "echo ============================================\r\n"
+            "echo.\r\n"
+            f'"{python_exe}" main.py reboot-verify\r\n'
+            "echo.\r\n"
+            "echo Verify completed. Press any key to close...\r\n"
+            "pause >nul\r\n"
+        )
+        bat.write_text(bat_content, encoding="utf-8")
+        log.info("Wrote verify batch file: %s", bat)
+
+        # Create scheduled task: run on logon, 30s delay, interactive
+        result = subprocess.run(
+            [
+                "schtasks", "/create",
+                "/tn", name,
+                "/tr", str(bat),
+                "/sc", "ONLOGON",
+                "/delay", "0000:30",
+                "/rl", "HIGHEST",
+                "/it",
+                "/f",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            log.warning(
+                "schtasks /create failed (exit %d): %s",
+                result.returncode, result.stderr,
+            )
+            raise RuntimeError(
+                f"Failed to create scheduled task: {result.stderr.strip()}"
+            )
+        log.info("Scheduled task '%s' created — will run on next logon", name)
+
+    @staticmethod
+    def delete_verify_task(
+        bat_path: Path | None = None,
+        task_name: str | None = None,
+    ) -> None:
+        """
+        Delete the reboot-verify scheduled task and batch file.
+
+        :param bat_path: Override path for the .bat file (for testing).
+        :param task_name: Override task name (for testing).
+        """
+        name = task_name or VERIFY_TASK_NAME
+        bat = bat_path or VERIFY_BAT_PATH
+
+        # Delete scheduled task
+        try:
+            result = subprocess.run(
+                ["schtasks", "/delete", "/tn", name, "/f"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                log.info("Scheduled task '%s' deleted", name)
+            else:
+                log.info(
+                    "Scheduled task '%s' not found or already deleted", name,
+                )
+        except Exception as exc:
+            log.warning("Failed to delete scheduled task: %s", exc)
+
+        # Delete batch file
+        if bat.is_file():
+            bat.unlink()
+            log.info("Deleted verify batch file: %s", bat)
