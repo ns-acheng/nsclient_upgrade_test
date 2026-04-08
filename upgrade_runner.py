@@ -4,14 +4,18 @@ Each public method implements a complete upgrade scenario end-to-end.
 """
 
 import logging
+import shutil
 import socket
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from util_client import LocalClient
 from util_config import UpgradeConfig
 from util_webui import WebUIClient
+
+BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +56,7 @@ class UpgradeRunner:
         upgrade_cfg: UpgradeConfig,
         host_name: Optional[str] = None,
         email: Optional[str] = None,
+        is_64_bit: bool = False,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -61,21 +66,28 @@ class UpgradeRunner:
         :param upgrade_cfg: Polling and timing configuration.
         :param host_name: Device hostname for WebUI verification.
         :param email: User email for WebUI verification.
+        :param is_64_bit: Whether to use 64-bit client installer (Windows).
         """
         self.webui = webui
         self.client = client
         self.cfg = upgrade_cfg
         self.host_name = host_name or socket.gethostname()
         self.email = email or client.email
+        self.is_64_bit = is_64_bit
 
     # ── Upgrade Scenarios ────────────────────────────────────────────
 
-    def run_upgrade_to_latest(self, from_version: str) -> UpgradeResult:
+    def run_upgrade_to_latest(
+        self,
+        from_version: Optional[str] = None,
+    ) -> UpgradeResult:
         """
         Scenario: Install older version, enable auto-upgrade to latest,
         wait and verify upgrade completes.
 
-        :param from_version: Build version to install first (e.g. 'release-92.0.0').
+        :param from_version: Build version for download fallback
+                             (e.g. '123.0.0'). Not needed when a
+                             local installer exists in data/base_version/.
         :return: UpgradeResult with outcome details.
         """
         scenario = "upgrade_to_latest"
@@ -243,12 +255,17 @@ class UpgradeRunner:
         finally:
             self._cleanup()
 
-    def run_upgrade_disabled(self, from_version: str) -> UpgradeResult:
+    def run_upgrade_disabled(
+        self,
+        from_version: Optional[str] = None,
+    ) -> UpgradeResult:
         """
         Scenario: Install a version with auto-upgrade disabled, verify
         the client does NOT upgrade.
 
-        :param from_version: Build to install (e.g. 'release-92.0.0').
+        :param from_version: Build version for download fallback
+                             (e.g. '123.0.0'). Not needed when a
+                             local installer exists in data/base_version/.
         :return: UpgradeResult with outcome details.
         """
         scenario = "upgrade_disabled"
@@ -319,22 +336,41 @@ class UpgradeRunner:
 
     # ── Shared Helpers ───────────────────────────────────────────────
 
-    def _prepare_client(self, from_version: str) -> str:
+    def _prepare_client(self, from_version: Optional[str] = None) -> str:
         """
-        Common setup: disable auto-upgrade, download and install a build.
+        Common setup: disable auto-upgrade, resolve installer, and install.
 
-        :param from_version: Build version to install (e.g. 'release-92.0.0').
+        Installer resolution order:
+          1. Look for an existing file in data/base_version/.
+          2. If no local file is found, download using from_version.
+
+        :param from_version: Build version for download fallback
+                             (e.g. '123.0.0'). Required when no
+                             local installer is available.
         :return: Installed version string.
         """
         # Disable auto-upgrade first
         self.webui.disable_auto_upgrade()
 
-        # Download the target build
-        filename = self.client.get_installer_filename()
-        info = self.client.download_build(
-            build_version=from_version,
-            installer_filename=filename,
-        )
+        # Resolve installer location
+        expected_filename = self.client.get_installer_filename(is_64_bit=self.is_64_bit)
+        local_installer = self._resolve_local_installer(expected_filename)
+
+        if local_installer:
+            log.info("Using local installer: %s", local_installer)
+            setup_file = str(local_installer)
+        elif from_version:
+            log.info("No local installer found — downloading build")
+            build_version = f"release-{from_version}" if not from_version.startswith("release-") else from_version
+            info = self.client.download_build(
+                build_version=build_version,
+                installer_filename=expected_filename,
+            )
+            setup_file = info["location"]
+        else:
+            raise FileNotFoundError(
+                f"No installer found in {BASE_VERSION_DIR} and --from-version not provided"
+            )
 
         # Uninstall existing client if present
         if self.client.is_installed():
@@ -342,10 +378,39 @@ class UpgradeRunner:
             self.client.uninstall()
 
         # Install the specified version
-        self.client.install(setup_file_path=info["location"])
+        self.client.install(setup_file_path=setup_file)
         version = self.client.get_version()
         log.info("Installed client version: %s", version)
         return version
+
+    @staticmethod
+    def _resolve_local_installer(expected_filename: str) -> Optional[Path]:
+        """
+        Look for the expected installer file in data/base_version/.
+
+        If the exact filename exists, return it directly. Otherwise, if the
+        directory contains exactly one file, rename it to the expected name.
+
+        :param expected_filename: Target filename (e.g. 'STAgent.msi').
+        :return: Path to the installer, or None if not found.
+        """
+        if not BASE_VERSION_DIR.is_dir():
+            return None
+
+        # Exact match first
+        target = BASE_VERSION_DIR / expected_filename
+        if target.is_file():
+            return target
+
+        # Single-file fallback: rename it to the expected name
+        files = [f for f in BASE_VERSION_DIR.iterdir() if f.is_file()]
+        if len(files) == 1:
+            source = files[0]
+            log.info("Renaming %s -> %s", source.name, expected_filename)
+            shutil.move(str(source), str(target))
+            return target
+
+        return None
 
     def _wait_for_upgrade(
         self,

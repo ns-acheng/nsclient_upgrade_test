@@ -27,6 +27,7 @@ class WebUIClient:
         self._webapi: Optional[Any] = None
         self._client_config: Optional[Any] = None
         self._devices: Optional[Any] = None
+        self._users: Optional[Any] = None
 
     @property
     def is_connected(self) -> bool:
@@ -48,6 +49,7 @@ class WebUIClient:
                 ClientConfiguration,
             )
             from webapi.settings.security_cloud_platform.netskope_client.devices import Devices
+            from webapi.settings.security_cloud_platform.netskope_client.users import Users
         except ModuleNotFoundError:
             raise RuntimeError(
                 "pylark-webapi-lib is not installed. "
@@ -86,6 +88,7 @@ class WebUIClient:
         # Initialize page objects
         self._client_config = ClientConfiguration(webapi=self._webapi)
         self._devices = Devices(webapi=self._webapi)
+        self._users = Users(webapi=self._webapi)
 
     def _ensure_connected(self) -> None:
         """Raise if not connected."""
@@ -202,6 +205,24 @@ class WebUIClient:
             goldenReleaseVersion=golden_version,
             goldenDotReleaseUpdate=1 if dot else 0,
         )
+
+    # ── Email Invite ─────────────────────────────────────────────────
+
+    def send_email_invite(self, email: str) -> dict[str, Any]:
+        """
+        Create the user (if needed) and send an email invite with
+        client download links.
+
+        :param email: User email address.
+        :return: API response dict.
+        """
+        self._ensure_connected()
+        log.info("Sending email invite to %s", email)
+        response = self._users.create_user(
+            email=email, send_invite=True, warn_duplicate=False,
+        )
+        log.info("Email invite sent to %s", email)
+        return response
 
     # ── Device Queries ───────────────────────────────────────────────
 

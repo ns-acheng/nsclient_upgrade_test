@@ -6,8 +6,9 @@ First-time setup (saves tenant, username, and encrypted password):
 
 Then just run (uses saved password automatically):
     python main.py versions
-    python main.py upgrade --target latest --from-version release-92.0.0
-    python main.py upgrade --target golden --golden-index -1 --dot
+    python main.py upgrade --target latest
+    python main.py upgrade --target golden --dot
+    python main.py disable-upgrade
 """
 
 import argparse
@@ -84,16 +85,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--target", required=True,
-        choices=["latest", "golden", "disabled"],
+        choices=["latest", "golden"],
         help="Upgrade target type",
     )
     upgrade_parser.add_argument(
         "--from-version", type=str, default=None,
-        help="Build version to install before upgrade (e.g. release-92.0.0)",
+        help="Build version for download fallback (e.g. 123.0.0)",
     )
     upgrade_parser.add_argument(
         "--dot", action="store_true",
         help="Enable dot release updates for golden upgrade",
+    )
+    upgrade_parser.add_argument(
+        "--64bit", dest="is_64_bit", action="store_true",
+        help="Use 64-bit client installer (Windows only)",
+    )
+    upgrade_parser.add_argument(
+        "--email", type=str, default=None,
+        help="Send email invite to this address before upgrade",
+    )
+
+    # ── disable-upgrade ─────────────────────────────────────────
+    disable_parser = subparsers.add_parser(
+        "disable-upgrade",
+        help="Verify that auto-upgrade stays disabled (negative test)",
+    )
+    disable_parser.add_argument(
+        "--from-version", type=str, default=None,
+        help="Build version for download fallback (e.g. 123.0.0)",
+    )
+    disable_parser.add_argument(
+        "--64bit", dest="is_64_bit", action="store_true",
+        help="Use 64-bit client installer (Windows only)",
+    )
+    disable_parser.add_argument(
+        "--email", type=str, default=None,
+        help="Send email invite to this address before upgrade",
     )
 
     return parser
@@ -247,15 +274,14 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         print("  Install the Netskope Client library before running upgrade.")
         return 1
 
-    # Validate from-version for scenarios that need it
-    if args.target in ("latest", "disabled") and not args.from_version:
-        print("Error: --from-version is required for --target latest and --target disabled")
-        return 2
-
     # Connect to WebUI
     webui = WebUIClient()
     if not connect_with_retry(webui, cfg):
         return 1
+
+    # Send email invite if requested
+    if args.email:
+        webui.send_email_invite(args.email)
 
     # Initialize local client
     client = LocalClient()
@@ -266,6 +292,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         webui=webui,
         client=client,
         upgrade_cfg=cfg.upgrade,
+        is_64_bit=args.is_64_bit,
     )
 
     # Execute scenario
@@ -276,18 +303,41 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
 
     elif args.target == "golden":
         result = runner.run_upgrade_to_golden(
-            from_version=args.from_version,
-            dot=args.dot,
+            from_version=args.from_version, dot=args.dot,
         )
-
-    elif args.target == "disabled":
-        result = runner.run_upgrade_disabled(from_version=args.from_version)
 
     else:
         print(f"Error: Unknown target '{args.target}'")
         return 2
 
     # Print result summary
+    _print_result(result)
+    return 0 if result.success else 1
+
+
+def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
+    """Verify auto-upgrade stays disabled (negative test)."""
+    if not _check_nsclient_available():
+        print("\nError: nsclient package is not installed.")
+        print("  Install the Netskope Client library before running this command.")
+        return 1
+
+    webui = WebUIClient()
+    if not connect_with_retry(webui, cfg):
+        return 1
+
+    if args.email:
+        webui.send_email_invite(args.email)
+
+    client = LocalClient()
+    runner = UpgradeRunner(
+        webui=webui,
+        client=client,
+        upgrade_cfg=cfg.upgrade,
+        is_64_bit=args.is_64_bit,
+    )
+
+    result = runner.run_upgrade_disabled(from_version=args.from_version)
     _print_result(result)
     return 0 if result.success else 1
 
@@ -338,7 +388,7 @@ def main() -> int:
     #   1. CLI --password flag  (already in cfg)
     #   2. Saved encrypted password
     #   3. Prompt user
-    require_tenant = args.command in ("versions", "upgrade")
+    require_tenant = args.command in ("versions", "upgrade", "disable-upgrade")
     if require_tenant and cfg.tenant.hostname and cfg.tenant.username and not cfg.tenant.password:
         saved = load_password()
         if saved:
@@ -365,6 +415,8 @@ def main() -> int:
         return cmd_status(cfg)
     elif args.command == "upgrade":
         return cmd_upgrade(cfg, args)
+    elif args.command == "disable-upgrade":
+        return cmd_disable_upgrade(cfg, args)
     else:
         parser.print_help()
         return 2

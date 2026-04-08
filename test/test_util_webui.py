@@ -25,6 +25,7 @@ def mock_webapi_module() -> MagicMock:
     mock_auth_cls = MagicMock(name="Authentication")
     mock_client_config_cls = MagicMock(name="ClientConfiguration")
     mock_devices_cls = MagicMock(name="Devices")
+    mock_users_cls = MagicMock(name="Users")
 
     with patch.dict(sys.modules, {
         "webapi": MagicMock(WebAPI=mock_webapi_cls),
@@ -39,12 +40,16 @@ def mock_webapi_module() -> MagicMock:
         "webapi.settings.security_cloud_platform.netskope_client.devices": MagicMock(
             Devices=mock_devices_cls,
         ),
+        "webapi.settings.security_cloud_platform.netskope_client.users": MagicMock(
+            Users=mock_users_cls,
+        ),
     }):
         yield {
             "WebAPI": mock_webapi_cls,
             "Authentication": mock_auth_cls,
             "ClientConfiguration": mock_client_config_cls,
             "Devices": mock_devices_cls,
+            "Users": mock_users_cls,
         }
 
 
@@ -306,3 +311,30 @@ class TestDeviceQueries:
             host_name="test-host",
             email="a@b.com",
         )
+
+
+# ── Email Invite ─────────────────────────────────────────────────────
+
+
+class TestEmailInvite:
+    """Tests for send_email_invite."""
+
+    def test_send_email_invite(self, connected_client: tuple) -> None:
+        """send_email_invite calls create_user with send_invite=True."""
+        client, mocks = connected_client
+        users_instance = mocks["Users"].return_value
+        users_instance.create_user.return_value = {"status": "success"}
+
+        client.send_email_invite("user@example.com")
+
+        users_instance.create_user.assert_called_once_with(
+            email="user@example.com",
+            send_invite=True,
+            warn_duplicate=False,
+        )
+
+    def test_send_email_invite_raises_when_not_connected(self) -> None:
+        """send_email_invite raises when not connected."""
+        client = WebUIClient()
+        with pytest.raises(RuntimeError, match="Not connected"):
+            client.send_email_invite("user@example.com")

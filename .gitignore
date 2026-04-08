@@ -50,6 +50,9 @@ cache/
 data/.secret.key
 data/.password.enc
 
+# Base version installers — large binaries, do not commit
+data/base_version/
+
 # Local environment/config overrides
 .env
 .env.*

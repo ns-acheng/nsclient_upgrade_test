@@ -187,7 +187,7 @@ class LocalClient:
         """
         Download a specific client build from the build server.
 
-        :param build_version: Full build version (e.g. 'release-92.0.0').
+        :param build_version: Full build version (e.g. 'release-123.0.0').
         :param installer_filename: Installer filename (e.g. 'STAgent.msi').
         :param client_installer_file: Target local filename for the installer.
         :return: Dict with 'location' key pointing to downloaded file path.

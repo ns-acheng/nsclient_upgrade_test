@@ -299,7 +299,7 @@ class TestNsclientCheck:
         """cmd_upgrade returns 1 before connecting when nsclient is missing."""
         args = MagicMock()
         args.target = "latest"
-        args.from_version = "release-92.0.0"
+        args.from_version = "92.0.0"
         assert cmd_upgrade(cfg, args) == 1
         output = capsys.readouterr().out
         assert "nsclient package is not installed" in output

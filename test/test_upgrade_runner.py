@@ -5,6 +5,7 @@ All I/O is mocked — no network, no local client, no tenant needed.
 
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch, call
 
 import pytest
@@ -12,7 +13,7 @@ import pytest
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from upgrade_runner import UpgradeRunner, UpgradeResult, PollResult
+from upgrade_runner import UpgradeRunner, UpgradeResult, PollResult, BASE_VERSION_DIR
 from util_config import UpgradeConfig
 
 
@@ -68,6 +69,15 @@ def fast_cfg() -> UpgradeConfig:
     )
 
 
+@pytest.fixture(autouse=True)
+def no_local_installer(tmp_path: Path) -> Any:
+    """Prevent tests from picking up real data/base_version/ files."""
+    empty_dir = tmp_path / "empty_base_version"
+    empty_dir.mkdir()
+    with patch("upgrade_runner.BASE_VERSION_DIR", empty_dir):
+        yield
+
+
 @pytest.fixture
 def runner(mock_webui: MagicMock, mock_client: MagicMock, fast_cfg: UpgradeConfig) -> UpgradeRunner:
     """Create an UpgradeRunner with mocked dependencies."""
@@ -108,7 +118,7 @@ class TestUpgradeToLatest:
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
-        result = runner.run_upgrade_to_latest(from_version="release-92.0.0")
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
 
         assert result.success is True
         assert result.version_after == "95.1.0.900"
@@ -132,7 +142,7 @@ class TestUpgradeToLatest:
         # Version never changes
         mock_client.get_version.return_value = "92.0.0.100"
 
-        result = runner.run_upgrade_to_latest(from_version="release-92.0.0")
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
 
         assert result.success is False
         assert "FAILED" in result.message
@@ -152,7 +162,7 @@ class TestUpgradeToLatest:
         mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
-        runner.run_upgrade_to_latest(from_version="release-92.0.0")
+        runner.run_upgrade_to_latest(from_version="92.0.0")
 
         # disable_auto_upgrade called at least twice: once in _prepare, once in _cleanup
         assert mock_webui.disable_auto_upgrade.call_count >= 2
@@ -171,7 +181,7 @@ class TestUpgradeToLatest:
         mock_time.side_effect = [0, 0.5]
         mock_client.download_build.side_effect = Exception("Network error")
 
-        result = runner.run_upgrade_to_latest(from_version="release-92.0.0")
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
 
         assert result.success is False
         assert "Exception" in result.message
@@ -286,7 +296,7 @@ class TestUpgradeDisabled:
         mock_client.get_version.return_value = "92.0.0.100"
         mock_webui.get_device_version.return_value = "92.0.0.100"
 
-        result = runner.run_upgrade_disabled(from_version="release-92.0.0")
+        result = runner.run_upgrade_disabled(from_version="92.0.0")
 
         assert result.success is True
         assert result.version_before == "92.0.0.100"
@@ -312,7 +322,7 @@ class TestUpgradeDisabled:
         ]
         mock_webui.get_device_version.return_value = "95.0.0.100"
 
-        result = runner.run_upgrade_disabled(from_version="release-92.0.0")
+        result = runner.run_upgrade_disabled(from_version="92.0.0")
 
         assert result.success is False
         assert "UNEXPECTED" in result.message
@@ -339,7 +349,7 @@ class TestWebUIVerification:
         mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.return_value = "92.0.0.100"  # Stale!
 
-        result = runner.run_upgrade_to_latest(from_version="release-92.0.0")
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
 
         # Upgrade itself succeeded (version matched latest)
         assert result.success is True
@@ -361,7 +371,7 @@ class TestWebUIVerification:
         mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.side_effect = Exception("Connection lost")
 
-        result = runner.run_upgrade_to_latest(from_version="release-92.0.0")
+        result = runner.run_upgrade_to_latest(from_version="92.0.0")
 
         assert result.success is True
         assert result.webui_version == "error"
@@ -389,7 +399,7 @@ class TestPrepareClient:
         mock_client.get_version.return_value = "92.0.0.100"
         mock_webui.get_device_version.return_value = "92.0.0.100"
 
-        runner.run_upgrade_disabled(from_version="release-92.0.0")
+        runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.uninstall.assert_called_once()
         mock_client.install.assert_called_once()
@@ -410,7 +420,163 @@ class TestPrepareClient:
         mock_client.get_version.return_value = "92.0.0.100"
         mock_webui.get_device_version.return_value = "92.0.0.100"
 
-        runner.run_upgrade_disabled(from_version="release-92.0.0")
+        runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.uninstall.assert_not_called()
         mock_client.install.assert_called_once()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_local_installer_exact_match(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """When exact installer filename exists in base_version/, download is skipped."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+
+        # Place exact match file
+        (tmp_path / "STAgent.msi").touch()
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.download_build.assert_not_called()
+        mock_client.install.assert_called_once_with(
+            setup_file_path=str(tmp_path / "STAgent.msi"),
+        )
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_local_installer_64bit(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        fast_cfg: UpgradeConfig,
+        tmp_path: Path,
+    ) -> None:
+        """With is_64_bit=True, picks STAgent64.msi from base_version/."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+        mock_client.get_installer_filename.return_value = "STAgent64.msi"
+
+        # Place both 32-bit and 64-bit files
+        (tmp_path / "STAgent.msi").touch()
+        (tmp_path / "STAgent64.msi").touch()
+
+        runner_64 = UpgradeRunner(
+            webui=mock_webui,
+            client=mock_client,
+            upgrade_cfg=fast_cfg,
+            host_name="test-host",
+            email="test@gmail.com",
+            is_64_bit=True,
+        )
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner_64.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.download_build.assert_not_called()
+        mock_client.install.assert_called_once_with(
+            setup_file_path=str(tmp_path / "STAgent64.msi"),
+        )
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_local_installer_single_file_renamed(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Single file in base_version/ is renamed to expected filename."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+
+        # Place a single file with a different name
+        (tmp_path / "NSClient_old.msi").touch()
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        # File should have been renamed
+        assert (tmp_path / "STAgent.msi").exists()
+        assert not (tmp_path / "NSClient_old.msi").exists()
+        mock_client.download_build.assert_not_called()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_no_local_installer_falls_back_to_download(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """When data/base_version/ is empty, falls back to downloading."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.download_build.assert_called_once()
+        mock_client.install.assert_called_once()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_multiple_files_no_match_falls_back_to_download(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Multiple files with no exact match and >1 file falls back to download."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+
+        # Place two non-matching files — ambiguous, can't auto-rename
+        (tmp_path / "installer_a.msi").touch()
+        (tmp_path / "installer_b.msi").touch()
+
+        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+            runner.run_upgrade_disabled(from_version="92.0.0")
+
+        mock_client.download_build.assert_called_once()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_no_installer_no_from_version_errors(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+    ) -> None:
+        """Errors when no local installer and no from_version provided."""
+        mock_time.side_effect = [0, 0.5]
+
+        result = runner.run_upgrade_disabled()
+
+        assert result.success is False
+        assert "No installer found" in result.message

@@ -69,28 +69,72 @@ python main.py status
 All upgrade commands require `nsclient` to be installed. The tool checks for
 it up front and aborts with a clear message if missing.
 
-**Upgrade to latest release:**
+#### Base version installer
 
-```bash
-python main.py upgrade --target latest --from-version release-92.0.0
+Before running an upgrade, place the old version installer(s) in the
+`data/base_version/` directory. The tool supports both 32-bit and 64-bit
+Windows installers:
+
+```
+data/base_version/
+  STAgent.msi      <-- 32-bit installer
+  STAgent64.msi    <-- 64-bit installer
 ```
 
-**Upgrade to latest golden release (no dot release):**
+The tool picks the correct file based on platform and the `--64bit` flag:
+
+| Platform | Flag | Expected file |
+| --- | --- | --- |
+| Windows | *(default)* | `STAgent.msi` |
+| Windows | `--64bit` | `STAgent64.msi` |
+| macOS | | `STAgent.pkg` |
+| Linux | | `STAgent.run` |
+
+If the exact filename is found, it is used directly. If the directory
+contains a single file with a different name, it is automatically renamed.
+If no matching file is found, the tool falls back to downloading the build
+from the build server using `--from-version`.
+
+#### Send email invite (optional)
+
+Use `--email` to send an enrollment email invite to a user before the
+upgrade starts:
+
+```bash
+python main.py upgrade --target latest --email user@example.com
+```
+
+#### Upgrade to latest release
+
+```bash
+python main.py upgrade --target latest
+
+# Use 64-bit installer
+python main.py upgrade --target latest --64bit
+```
+
+#### Upgrade to latest golden release (no dot release)
 
 ```bash
 python main.py upgrade --target golden
 ```
 
-**Upgrade to latest golden with dot release:**
+#### Upgrade to latest golden with dot release
 
 ```bash
 python main.py upgrade --target golden --dot
 ```
 
-**Verify auto-upgrade stays disabled:**
+#### Verify auto-upgrade stays disabled
+
+A separate command that installs the base version with auto-upgrade disabled,
+waits, and verifies the client does **not** upgrade (negative test):
 
 ```bash
-python main.py upgrade --target disabled --from-version release-92.0.0
+python main.py disable-upgrade
+
+# Use 64-bit installer
+python main.py disable-upgrade --64bit
 ```
 
 ### Global Options
@@ -105,11 +149,15 @@ python main.py upgrade --target disabled --from-version release-92.0.0
 
 ### Upgrade Options
 
+These options apply to both `upgrade` and `disable-upgrade` commands:
+
 | Option | Description |
 | --- | --- |
-| `--target` | **Required.** `latest`, `golden`, or `disabled` |
-| `--from-version` | Build version to install before upgrade (required for `latest` and `disabled`) |
-| `--dot` | Enable dot release updates for golden upgrade |
+| `--target` | **Required** (upgrade only). `latest` or `golden` |
+| `--from-version` | Build version for download fallback when no local installer is available (e.g. `123.0.0`) |
+| `--64bit` | Use 64-bit client installer (Windows only) |
+| `--dot` | Enable dot release updates (upgrade `--target golden` only) |
+| `--email` | Send enrollment email invite before upgrade (optional) |
 
 ## Unit Tests
 
@@ -143,7 +191,8 @@ python -m pytest test/ -v
     upgrades
   - **WebUI verification** — version mismatch handling, API error resilience
   - **Prepare client** — uninstall-before-install flow, skip-uninstall when not
-    installed
+    installed, local installer exact match, 64-bit selection, single-file rename,
+    fallback to download, ambiguous multi-file fallback, missing installer error
 - `test/test_util_webui.py` — Tests for WebUI client wrapper:
   - **Connection** — authentication, page object init, missing webapi error,
     auth failure, login timeout
@@ -151,6 +200,7 @@ python -m pytest test/ -v
   - **Release versions** — data extraction, sorted version list
   - **Client config** — disable/enable upgrade, golden with/without dot
   - **Device queries** — version lookup
+  - **Email invite** — send invite, guard when not connected
 - `test/test_util_secret.py` — Tests for encrypted password storage:
   - **Round-trip** — save/load, overwrite, empty, unicode
   - **Missing data** — no files, missing key, missing password, corrupt data,
