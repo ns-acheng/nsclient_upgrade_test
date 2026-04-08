@@ -62,6 +62,8 @@ def mock_client() -> MagicMock:
     client.update_config.return_value = None
     client.install_msi.return_value = None
     client.create.return_value = None
+    client.sync_config_from_tenant.return_value = None
+    client.detect_tenant_from_nsconfig.return_value = None
     return client
 
 

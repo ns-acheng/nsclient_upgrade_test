@@ -38,6 +38,8 @@ class LocalClient:
         self._email: str = ""
 
     NSCONFIG_PATH = Path(r"C:\ProgramData\netskope\stagent\nsconfig.json")
+    NSDIAG_PATH_32 = Path(r"C:\Program Files (x86)\Netskope\STAgent\nsdiag.exe")
+    NSDIAG_PATH_64 = Path(r"C:\Program Files\Netskope\STAgent\nsdiag.exe")
 
     @staticmethod
     def detect_tenant_from_nsconfig(
@@ -78,6 +80,53 @@ class LocalClient:
         except Exception as exc:
             log.warning("Failed to read nsconfig.json: %s", exc)
             return None
+
+    @staticmethod
+    def sync_config_from_tenant(
+        is_64_bit: bool = False,
+        wait_seconds: float = 30,
+    ) -> None:
+        """
+        Trigger a config sync from the tenant using nsdiag -u.
+
+        After a fresh install, nsconfig.json may not yet contain
+        the full client configuration (e.g. configurationName).
+        Running ``nsdiag.exe -u`` forces the client to pull the
+        latest config from the tenant.
+
+        :param is_64_bit: Use 64-bit nsdiag path.
+        :param wait_seconds: Seconds to wait after sync for config
+                             to be written to nsconfig.json.
+        """
+        nsdiag = (
+            LocalClient.NSDIAG_PATH_64 if is_64_bit
+            else LocalClient.NSDIAG_PATH_32
+        )
+        if not nsdiag.is_file():
+            log.warning("nsdiag not found at %s — skipping config sync", nsdiag)
+            return
+
+        log.info("Syncing config from tenant: %s -u", nsdiag)
+        try:
+            result = subprocess.run(
+                [str(nsdiag), "-u"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                log.warning(
+                    "nsdiag -u exit code %d: %s",
+                    result.returncode, result.stderr,
+                )
+        except Exception as exc:
+            log.warning("nsdiag -u failed: %s", exc)
+            return
+
+        log.info(
+            "Waiting %ds for config sync to complete...",
+            int(wait_seconds),
+        )
+        time.sleep(wait_seconds)
+        log.info("Config sync wait completed")
 
     @property
     def is_initialized(self) -> bool:

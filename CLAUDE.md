@@ -114,6 +114,20 @@ The local Netskope Client stores its configuration at
   the correct `config_name` as `search_config` so changes apply to the right
   configuration — otherwise they silently save to the default tenant config.
 
+### Config Sync After Fresh Install (nsdiag -u)
+
+After a fresh client install, `nsconfig.json` does **not** yet contain the
+full tenant configuration (e.g. `configurationName` is missing). The client
+must sync with the tenant first:
+
+```
+"C:\Program Files (x86)\Netskope\STAgent\nsdiag.exe" -u   # 32-bit client
+"C:\Program Files\Netskope\STAgent\nsdiag.exe" -u          # 64-bit client
+```
+
+Wait ~30 seconds after running `nsdiag -u` for the config to be written to
+`nsconfig.json`, then re-read it to get the correct `configurationName`.
+
 ### Upgrade Schedule (useScheduledUpgrade)
 
 The tenant's `saveClientConfig` API accepts a `useScheduledUpgrade` field to

@@ -115,6 +115,7 @@ class UpgradeRunner:
         try:
             # Phase 1: Ensure base client is installed (no nsclient needed)
             self._ensure_client_installed(from_version, invite_email)
+            self._sync_and_detect_config()
 
             # Phase 2: Init nsclient + read version
             nsclient_ok = self._init_nsclient()
@@ -230,6 +231,7 @@ class UpgradeRunner:
 
             # Phase 1: Ensure base client is installed (no nsclient needed)
             self._ensure_client_installed(from_version, invite_email)
+            self._sync_and_detect_config()
 
             # Phase 2: Init nsclient + read version
             nsclient_ok = self._init_nsclient()
@@ -331,6 +333,7 @@ class UpgradeRunner:
         try:
             # Phase 1: Ensure base client is installed (no nsclient needed)
             self._ensure_client_installed(from_version, invite_email)
+            self._sync_and_detect_config()
 
             # Phase 2: Init nsclient + read version
             nsclient_ok = self._init_nsclient()
@@ -715,6 +718,29 @@ class UpgradeRunner:
         except Exception as exc:
             log.warning("Failed to verify WebUI version: %s", exc)
             return "error"
+
+    def _sync_and_detect_config(self) -> None:
+        """
+        Sync config from tenant and re-detect config_name.
+
+        After a fresh install, nsconfig.json may not yet have the
+        ``configurationName``.  Running ``nsdiag -u`` forces a pull,
+        then we re-read nsconfig.json to pick up the correct name.
+        Skips entirely when config_name is already set.
+        """
+        if self.config_name:
+            return
+        log.info("config_name is empty — syncing config from tenant")
+        self.client.sync_config_from_tenant(is_64_bit=self.is_64_bit)
+        ns_info = self.client.detect_tenant_from_nsconfig()
+        if ns_info and ns_info.config_name:
+            self.config_name = ns_info.config_name
+            log.info("Detected config_name after sync: %s", self.config_name)
+        else:
+            log.warning(
+                "Could not detect config_name after sync — "
+                "API calls will target the default config"
+            )
 
     def _cleanup(self) -> None:
         """Reset tenant config to disable auto-upgrade."""
