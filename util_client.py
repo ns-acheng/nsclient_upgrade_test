@@ -74,6 +74,7 @@ class UninstallEntryResult:
     display_name: str
     display_version: str
     install_location: str
+    product_code: str = ""
 
 
 @dataclass
@@ -300,6 +301,66 @@ class LocalClient:
         log.info("Uninstalling client")
         self._client.uninstall()
         log.info("Client uninstalled")
+
+    @staticmethod
+    def uninstall_msi(product_code: str) -> None:
+        """
+        Uninstall the client using ``msiexec /x`` with a product code.
+
+        :param product_code: Registry subkey name (e.g. '{GUID}' or 'NetskopeClient').
+        """
+        log.info("Uninstalling via msiexec /x %s", product_code)
+        result = subprocess.run(
+            ["msiexec", "/x", product_code, "/qn"],
+            capture_output=True, timeout=300,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            log.warning(
+                "msiexec /x exit code %d: %s",
+                result.returncode, result.stderr,
+            )
+        else:
+            log.info("msiexec /x completed")
+
+    @staticmethod
+    def get_msi_subject(msi_path: Path) -> str:
+        """
+        Read the Subject field from an MSI file's summary information.
+
+        Uses the Windows Installer COM object via PowerShell.
+        The Subject typically contains the product version string.
+
+        :param msi_path: Path to the .msi file.
+        :return: Subject string, or empty on failure.
+        """
+        ps_script = (
+            "$installer = New-Object -ComObject WindowsInstaller.Installer; "
+            "$db = $installer.GetType().InvokeMember('OpenDatabase', "
+            "'InvokeMethod', $null, $installer, "
+            f"@('{msi_path}', 0)); "
+            "$si = $db.GetType().InvokeMember('SummaryInformation', "
+            "'GetProperty', $null, $db, $null); "
+            "$si.GetType().InvokeMember('Property', "
+            "'GetProperty', $null, $si, @(3))"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, text=True, timeout=15,
+            )
+            subject = result.stdout.strip()
+            if result.returncode == 0 and subject:
+                log.info("MSI subject for %s: %s", msi_path.name, subject)
+                return subject
+            log.warning(
+                "Failed to read MSI subject (exit %d): %s",
+                result.returncode, result.stderr.strip(),
+            )
+            return ""
+        except Exception as exc:
+            log.warning("Failed to read MSI subject: %s", exc)
+            return ""
 
     # ── Service ─────────────────────────────────────────────────────
 
@@ -675,14 +736,16 @@ class LocalClient:
                                     except FileNotFoundError:
                                         pass
                                     log.info(
-                                        "Found uninstall entry: %s v%s at %s",
+                                        "Found uninstall entry: %s v%s at %s (key=%s)",
                                         display_name, display_ver, install_loc,
+                                        subkey_name,
                                     )
                                     return UninstallEntryResult(
                                         found=True,
                                         display_name=str(display_name),
                                         display_version=str(display_ver),
                                         install_location=str(install_loc),
+                                        product_code=subkey_name,
                                     )
                             i += 1
                         except OSError:

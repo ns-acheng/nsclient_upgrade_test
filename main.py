@@ -7,7 +7,8 @@ First-time setup (saves tenant, username, and encrypted password):
 Then just run (uses saved password automatically):
     python main.py versions
     python main.py upgrade --target latest
-    python main.py upgrade --target golden --dot
+    python main.py upgrade --target golden
+    python main.py upgrade --target golden-dot --email acheng@netskope.com
     python main.py disable-upgrade
 """
 
@@ -85,16 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--target", required=True,
-        choices=["latest", "golden"],
-        help="Upgrade target type",
+        choices=["latest", "golden", "golden-dot"],
+        help="Upgrade target: latest, golden (base only), or golden-dot (with dot release)",
     )
     upgrade_parser.add_argument(
         "--from-version", type=str, default=None,
         help="Build version for download fallback (e.g. 123.0.0)",
-    )
-    upgrade_parser.add_argument(
-        "--dot", action="store_true",
-        help="Enable dot release updates for golden upgrade",
     )
     upgrade_parser.add_argument(
         "--64bit", dest="is_64_bit", action="store_true",
@@ -130,8 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reboot_setup_parser.add_argument(
         "--target", required=True,
-        choices=["latest", "golden"],
-        help="Upgrade target type",
+        choices=["latest", "golden", "golden-dot"],
+        help="Upgrade target: latest, golden (base only), or golden-dot (with dot release)",
     )
     reboot_setup_parser.add_argument(
         "--reboot-timing", required=True,
@@ -148,10 +145,6 @@ def build_parser() -> argparse.ArgumentParser:
     reboot_setup_parser.add_argument(
         "--target-64bit", dest="target_64_bit", action="store_true", default=None,
         help="Upgrade target is 64-bit (defaults to --64bit value)",
-    )
-    reboot_setup_parser.add_argument(
-        "--dot", action="store_true",
-        help="Enable dot release updates for golden upgrade",
     )
     reboot_setup_parser.add_argument(
         "--email", type=str, default=None,
@@ -357,9 +350,11 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
             from_version=args.from_version, invite_email=args.email,
         )
 
-    elif args.target == "golden":
+    elif args.target in ("golden", "golden-dot"):
         result = runner.run_upgrade_to_golden(
-            from_version=args.from_version, dot=args.dot, invite_email=args.email,
+            from_version=args.from_version,
+            dot=(args.target == "golden-dot"),
+            invite_email=args.email,
         )
 
     else:
@@ -412,12 +407,13 @@ def cmd_reboot_setup(cfg: ToolConfig, args: argparse.Namespace) -> int:
     )
 
     target_64 = args.target_64_bit if args.target_64_bit is not None else args.is_64_bit
+    target_type = "golden" if args.target == "golden-dot" else args.target
 
     result = runner.run_reboot_interrupt_setup(
-        target_type=args.target,
+        target_type=target_type,
         reboot_timing=args.reboot_timing,
         from_version=args.from_version,
-        dot=args.dot,
+        dot=(args.target == "golden-dot"),
         invite_email=args.email,
         target_64_bit=target_64,
         stabilize_wait=args.stabilize_wait,

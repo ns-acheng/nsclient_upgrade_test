@@ -98,10 +98,13 @@ from the build server using `--from-version`.
 #### Send email invite (optional)
 
 Use `--email` to send an enrollment email invite to a user before the
-upgrade starts:
+upgrade starts. The tool will prompt you for the download link from the
+email, then rename the base installer to the tenant-specific name before
+installing:
 
 ```bash
 python main.py upgrade --target latest --email user@example.com
+python main.py upgrade --target golden-dot --email user@example.com
 ```
 
 #### Upgrade to latest release
@@ -113,7 +116,7 @@ python main.py upgrade --target latest
 python main.py upgrade --target latest --64bit
 ```
 
-#### Upgrade to latest golden release (no dot release)
+#### Upgrade to latest golden release (base version only)
 
 ```bash
 python main.py upgrade --target golden
@@ -122,7 +125,7 @@ python main.py upgrade --target golden
 #### Upgrade to latest golden with dot release
 
 ```bash
-python main.py upgrade --target golden --dot
+python main.py upgrade --target golden-dot
 ```
 
 #### Verify auto-upgrade stays disabled
@@ -153,10 +156,9 @@ These options apply to both `upgrade` and `disable-upgrade` commands:
 
 | Option | Description |
 | --- | --- |
-| `--target` | **Required** (upgrade only). `latest` or `golden` |
+| `--target` | **Required** (upgrade only). `latest`, `golden`, or `golden-dot` |
 | `--from-version` | Build version for download fallback when no local installer is available (e.g. `123.0.0`) |
 | `--64bit` | Use 64-bit client installer (Windows only) |
-| `--dot` | Enable dot release updates (upgrade `--target golden` only) |
 | `--email` | Send enrollment email invite before upgrade (optional) |
 
 ## Unit Tests
