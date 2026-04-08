@@ -452,11 +452,20 @@ def cmd_reboot_verify(cfg: ToolConfig, args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
+_GREEN = "\033[92m"
+_RED = "\033[91m"
+_RESET = "\033[0m"
+
+
+def _icon(ok: bool) -> str:
+    """Return a colored PASS/FAIL tag."""
+    return f"{_GREEN}PASS{_RESET}" if ok else f"{_RED}FAIL{_RESET}"
+
+
 def _print_reboot_verify_result(result: RebootVerifyResult) -> None:
     """Print a formatted reboot-verify result summary."""
-    status_icon = "PASS" if result.success else "FAIL"
     print(f"\n{'=' * 60}")
-    print(f"  [{status_icon}] {result.scenario}")
+    print(f"  [{_icon(result.success)}] {result.scenario}")
     print(f"{'=' * 60}")
     print(f"  Version before:       {result.version_before}")
     print(f"  Version after:        {result.version_after}")
@@ -474,8 +483,7 @@ def _print_reboot_verify_result(result: RebootVerifyResult) -> None:
     # Executable validation
     exe = result.exe_validation
     if exe:
-        exe_icon = "PASS" if exe.valid else "FAIL"
-        print(f"  Executables [{exe_icon}]:    dir={exe.install_dir}")
+        print(f"  Executables [{_icon(exe.valid)}]:    dir={exe.install_dir}")
         if exe.present:
             print(f"    Present:    {', '.join(exe.present)}")
         if exe.missing:
@@ -486,8 +494,7 @@ def _print_reboot_verify_result(result: RebootVerifyResult) -> None:
     # Uninstall registry entry
     unreg = result.uninstall_entry
     if unreg:
-        unreg_icon = "PASS" if unreg.found else "FAIL"
-        print(f"  Uninstall entry [{unreg_icon}]:")
+        print(f"  Uninstall entry [{_icon(unreg.found)}]:")
         if unreg.found:
             print(f"    Name:       {unreg.display_name}")
             print(f"    Version:    {unreg.display_version}")
@@ -501,21 +508,18 @@ def _print_reboot_verify_result(result: RebootVerifyResult) -> None:
 
 def _print_result(result: UpgradeResult) -> None:
     """Print a formatted upgrade result summary."""
-    status_icon = "PASS" if result.success else "FAIL"
     print(f"\n{'=' * 60}")
-    print(f"  [{status_icon}] {result.scenario}")
+    print(f"  [{_icon(result.success)}] {result.scenario}")
     print(f"{'=' * 60}")
     print(f"  Version before:    {result.version_before}")
     print(f"  Version after:     {result.version_after}")
     print(f"  Expected version:  {result.expected_version}")
     print(f"  WebUI version:     {result.webui_version}")
-    svc_icon = "PASS" if result.service_running else "FAIL"
-    print(f"  Service running:   [{svc_icon}]")
+    print(f"  Service running:   [{_icon(result.service_running)}]")
     # Executable validation
     exe = result.exe_validation
     if exe:
-        exe_icon = "PASS" if exe.valid else "FAIL"
-        print(f"  Executables [{exe_icon}]:  dir={exe.install_dir}")
+        print(f"  Executables [{_icon(exe.valid)}]:  dir={exe.install_dir}")
         if exe.present:
             print(f"    Present:         {', '.join(exe.present)}")
         if exe.missing:
@@ -526,8 +530,7 @@ def _print_result(result: UpgradeResult) -> None:
     # Uninstall registry entry
     unreg = result.uninstall_entry
     if unreg:
-        unreg_icon = "PASS" if unreg.found else "FAIL"
-        print(f"  Uninstall entry [{unreg_icon}]:")
+        print(f"  Uninstall entry [{_icon(unreg.found)}]:")
         if unreg.found:
             print(f"    Name:            {unreg.display_name}")
             print(f"    Version:         {unreg.display_version}")
