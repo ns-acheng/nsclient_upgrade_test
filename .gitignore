@@ -54,6 +54,9 @@ data/.passwords.enc
 # Base version installers — large binaries, do not commit
 data/base_version/
 
+# Chrome local profile for email automation
+local_profile/
+
 # Local environment/config overrides
 .env
 .env.*

@@ -13,7 +13,7 @@ LOG_FORMAT = "%(asctime)s [%(levelname)-7s] %(name)s - %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # Third-party loggers to silence
-NOISY_LOGGERS = ("urllib3", "requests", "chardet", "charset_normalizer")
+NOISY_LOGGERS = ("urllib3", "requests", "chardet", "charset_normalizer", "selenium")
 
 # webapi logs a noisy ERROR + traceback for CPCS auth fallback even though
 # legacy login succeeds. Suppress entirely so it doesn't alarm users.

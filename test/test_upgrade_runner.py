@@ -776,6 +776,71 @@ class TestEnsureClientInstalled:
         assert result.success is False
         assert "No installer found" in result.message
 
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_auto_email_extracts_link(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """GmailBrowser auto-extracts download link; no manual input."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.return_value = False
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+
+        mock_browser = MagicMock()
+        mock_browser.get_download_link.return_value = (
+            "https://download.example.com/dlr/win/TOKEN"
+        )
+        mock_browser.__enter__ = MagicMock(return_value=mock_browser)
+        mock_browser.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "util_email.GmailBrowser", return_value=mock_browser,
+        ), patch("builtins.input") as mock_input:
+            runner.run_upgrade_disabled(
+                from_version="92.0.0",
+                invite_email="user@example.com",
+            )
+            mock_browser.connect.assert_called_once()
+            mock_browser.get_download_link.assert_called_once()
+            mock_input.assert_not_called()
+
+    @patch("upgrade_runner.time.sleep", return_value=None)
+    @patch("upgrade_runner.time.time")
+    def test_auto_email_fallback_to_manual(
+        self,
+        mock_time: MagicMock,
+        mock_sleep: MagicMock,
+        runner: UpgradeRunner,
+        mock_client: MagicMock,
+        mock_webui: MagicMock,
+    ) -> None:
+        """Falls back to manual input when auto-email fails."""
+        mock_time.side_effect = [0, 0.1, 100, 100, 100]
+        mock_client.is_service_running.return_value = False
+        mock_client.get_version.return_value = "92.0.0.100"
+        mock_webui.get_device_version.return_value = "92.0.0.100"
+
+        mock_browser = MagicMock()
+        mock_browser.connect.side_effect = RuntimeError("no Chrome")
+        mock_browser.__enter__ = MagicMock(return_value=mock_browser)
+        mock_browser.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "util_email.GmailBrowser", return_value=mock_browser,
+        ), patch("builtins.input", return_value="") as mock_input:
+            runner.run_upgrade_disabled(
+                from_version="92.0.0",
+                invite_email="user@example.com",
+            )
+            # Falls back to manual input prompt
+            mock_input.assert_called_once()
+
 
 # ── MSI Version Check ───────────────────────────────────────────────
 

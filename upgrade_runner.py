@@ -584,20 +584,35 @@ class UpgradeRunner:
             log.info("Sending email invite to %s", invite_email)
             self.webui.send_email_invite(invite_email)
 
-        # Prompt user for the download link from the email invite
+        # Get download link from email invite
         installer_name = None
         if invite_email:
-            print("\n" + "=" * 60)
-            print("Email invite sent. Open the email and copy the download link.")
-            print("Example: https://download-tenant.example.com/dlr/win/TOKEN")
-            print("=" * 60)
-            download_link = input("Paste the download link here: ").strip()
+            # Auto-extract from Gmail, fall back to manual paste
+            download_link = self._fetch_download_link_from_gmail(
+                invite_email
+            )
+            if not download_link:
+                print("\n" + "=" * 60)
+                print(
+                    "Auto-email extraction failed. "
+                    "Open the email and copy the download link."
+                )
+                print(
+                    "Example: "
+                    "https://download-tenant.example.com/dlr/win/TOKEN"
+                )
+                print("=" * 60)
+                download_link = input(
+                    "Paste the download link here: "
+                ).strip()
             if download_link:
                 installer_name = self._get_installer_name(download_link)
                 if installer_name:
                     print(f"Installer name: {installer_name}")
             else:
-                log.info("No download link provided — using base installer name")
+                log.info(
+                    "No download link provided — using base installer name"
+                )
 
         # Resolve base installer and copy to tenant-specific name
         installer = self._resolve_installer(base_filename, installer_name)
@@ -630,6 +645,34 @@ class UpgradeRunner:
             raise RuntimeError(
                 "Client service (stAgentSvc) did not start after installation"
             )
+
+    def _fetch_download_link_from_gmail(
+        self, invite_email: str,
+    ) -> str:
+        """
+        Try to auto-extract the download link from Gmail.
+
+        Returns the URL on success, or an empty string on any failure
+        (caller falls back to the manual input prompt).
+        """
+        try:
+            from util_email import GmailBrowser
+
+            with GmailBrowser(
+                email_address=invite_email,
+                is_64_bit=self.source_64_bit,
+            ) as browser:
+                browser.connect()
+                url = browser.get_download_link()
+                log.info("Auto-extracted download link: %s", url)
+                return url
+        except Exception:
+            log.warning(
+                "Auto-email extraction failed — falling back to "
+                "manual input",
+                exc_info=True,
+            )
+            return ""
 
     @staticmethod
     def _find_base_installer(base_filename: str) -> Optional[Path]:

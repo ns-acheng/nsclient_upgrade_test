@@ -13,7 +13,11 @@
       "Bash(xargs cat:*)",
       "Bash(xargs ls:*)",
       "Bash(find . -type f \\\\\\( -name \"*.json\" -o -name \"*.py\" \\\\\\) -exec grep -l \"Time\\\\|time\\\\|Hour\\\\|hour\\\\|schedule\\\\|Schedule\\\\|upgrade\" {} \\\\;)",
-      "Bash(find C:\\\\git\\\\nsclient_tests:*)"
+      "Bash(find C:\\\\git\\\\nsclient_tests:*)",
+      "Bash(grep:*)",
+      "Bash(tasklist)",
+      "Bash(powershell:*)",
+      "Bash(netstat -ano)"
     ]
   }
 }
