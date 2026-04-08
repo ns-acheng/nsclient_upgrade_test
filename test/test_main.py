@@ -179,7 +179,9 @@ class TestConnectWithRetry:
         webui = MagicMock()
         assert connect_with_retry(webui, cfg) is True
         webui.connect.assert_called_once()
-        mock_save.assert_called_once_with("secret")
+        mock_save.assert_called_once_with(
+            "secret", "tenant.example.com", "admin@example.com",
+        )
 
     @patch("main.save_password")
     @patch("main.clear_password")
@@ -194,8 +196,10 @@ class TestConnectWithRetry:
 
         assert connect_with_retry(webui, cfg) is True
         assert webui.connect.call_count == 2
-        mock_clear.assert_called_once()
-        mock_save.assert_called_once_with("correct_pass")
+        mock_clear.assert_called_once_with("tenant.example.com", "admin@example.com")
+        mock_save.assert_called_once_with(
+            "correct_pass", "tenant.example.com", "admin@example.com",
+        )
 
     @patch("main.save_password")
     @patch("main.clear_password")
@@ -227,7 +231,9 @@ class TestConnectWithRetry:
 
         assert connect_with_retry(webui, cfg) is True
         assert webui.connect.call_count == 3
-        mock_save.assert_called_once_with("correct")
+        mock_save.assert_called_once_with(
+            "correct", "tenant.example.com", "admin@example.com",
+        )
 
     @patch("main.save_password")
     def test_non_auth_error_propagates(
@@ -249,12 +255,12 @@ class TestConnectWithRetry:
         self, mock_getpass: MagicMock, mock_clear: MagicMock,
         mock_save: MagicMock, cfg: ToolConfig,
     ) -> None:
-        """Clears saved password file each time auth fails."""
+        """Clears saved password for the specific tenant/user on auth failure."""
         webui = MagicMock()
         webui.connect.side_effect = [AUTH_ERROR, None]
 
         connect_with_retry(webui, cfg)
-        mock_clear.assert_called_once()
+        mock_clear.assert_called_once_with("tenant.example.com", "admin@example.com")
 
     @patch("main.save_password")
     @patch("main.clear_password")
@@ -272,14 +278,14 @@ class TestConnectWithRetry:
 
         assert connect_with_retry(webui, cfg) is True
         assert webui.connect.call_count == 2
-        mock_clear.assert_called_once()
+        mock_clear.assert_called_once_with("tenant.example.com", "admin@example.com")
 
 
 # ── nsclient availability checks ────────────────────────────────────
 
 
 class TestNsclientCheck:
-    """Tests for nsclient availability guard in status and upgrade."""
+    """Tests for nsclient availability guard in status command."""
 
     @patch("main._check_nsclient_available", return_value=False)
     def test_status_aborts_without_nsclient(
@@ -288,18 +294,5 @@ class TestNsclientCheck:
     ) -> None:
         """cmd_status returns 1 with clear message when nsclient is missing."""
         assert cmd_status(cfg) == 1
-        output = capsys.readouterr().out
-        assert "nsclient package is not installed" in output
-
-    @patch("main._check_nsclient_available", return_value=False)
-    def test_upgrade_aborts_without_nsclient(
-        self, mock_check: MagicMock, cfg: ToolConfig,
-        capsys: pytest.CaptureFixture,
-    ) -> None:
-        """cmd_upgrade returns 1 before connecting when nsclient is missing."""
-        args = MagicMock()
-        args.target = "latest"
-        args.from_version = "92.0.0"
-        assert cmd_upgrade(cfg, args) == 1
         output = capsys.readouterr().out
         assert "nsclient package is not installed" in output

@@ -8,6 +8,7 @@ imported without webapi installed (e.g. during testing or --help).
 
 import logging
 import threading
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 LOGIN_TIMEOUT_SECONDS = 60
@@ -28,6 +29,12 @@ class WebUIClient:
         self._client_config: Optional[Any] = None
         self._devices: Optional[Any] = None
         self._users: Optional[Any] = None
+        self._hostname: str = ""
+
+    @property
+    def hostname(self) -> str:
+        """Return the connected tenant hostname."""
+        return self._hostname
 
     @property
     def is_connected(self) -> bool:
@@ -57,6 +64,7 @@ class WebUIClient:
             )
 
         log.info("Connecting to tenant: %s as %s", hostname, username)
+        self._hostname = hostname
         self._webapi = WebAPI(hostname=hostname, username=username, password=password)
         auth = Authentication(self._webapi)
 
@@ -148,7 +156,7 @@ class WebUIClient:
         :return: API response dict.
         """
         self._ensure_connected()
-        log.info("Updating client config: %s", kwargs)
+        log.info("Updating client config %r: %s", search_config or "(default)", kwargs)
         return self._client_config.update_client_config(search_config=search_config, **kwargs)
 
     def disable_auto_upgrade(self, search_config: str = "") -> dict[str, Any]:
@@ -158,7 +166,7 @@ class WebUIClient:
         :param search_config: Config name (empty for default).
         :return: API response dict.
         """
-        log.info("Disabling auto-upgrade on tenant")
+        log.info("Disabling auto-upgrade on tenant (config=%r)", search_config or "(default)")
         return self.update_client_config(
             search_config=search_config,
             clientAllowAutoUpdate=0,
@@ -174,7 +182,7 @@ class WebUIClient:
         :param search_config: Config name (empty for default).
         :return: API response dict.
         """
-        log.info("Enabling auto-upgrade to LATEST release")
+        log.info("Enabling auto-upgrade to LATEST release (config=%r)", search_config or "(default)")
         return self.update_client_config(
             search_config=search_config,
             clientAllowAutoUpdate=1,
@@ -195,8 +203,8 @@ class WebUIClient:
         :return: API response dict.
         """
         log.info(
-            "Enabling auto-upgrade to GOLDEN release %s (dot=%s)",
-            golden_version, dot,
+            "Enabling auto-upgrade to GOLDEN release %s (dot=%s, config=%r)",
+            golden_version, dot, search_config or "(default)",
         )
         return self.update_client_config(
             search_config=search_config,
@@ -206,21 +214,53 @@ class WebUIClient:
             goldenDotReleaseUpdate=1 if dot else 0,
         )
 
+    # ── Upgrade Schedule ─────────────────────────────────────────────
+
+    def set_upgrade_schedule(
+        self,
+        minutes_from_now: int = 2,
+        search_config: str = "",
+    ) -> dict[str, Any]:
+        """
+        Schedule client upgrade to trigger a given number of minutes from now.
+
+        Sets the ``useScheduledUpgrade`` field via saveClientConfig so the
+        tenant triggers the upgrade at the computed time.
+
+        :param minutes_from_now: Minutes from now to schedule the upgrade.
+        :param search_config: Config name (empty for default).
+        :return: API response dict.
+        """
+        upgrade_time = (
+            datetime.now() + timedelta(minutes=minutes_from_now)
+        ).strftime("%H:%M")
+        schedule: dict[str, Any] = {
+            "frequencyType": "daily",
+            "weekDay": [],
+            "weekOfTheMonth": [],
+            "time": upgrade_time,
+        }
+        log.info(
+            "Setting upgrade schedule: time=%s (now + %d min)",
+            upgrade_time, minutes_from_now,
+        )
+        return self.update_client_config(
+            search_config=search_config,
+            useScheduledUpgrade=schedule,
+        )
+
     # ── Email Invite ─────────────────────────────────────────────────
 
     def send_email_invite(self, email: str) -> dict[str, Any]:
         """
-        Create the user (if needed) and send an email invite with
-        client download links.
+        Send an enrollment email invite to an existing user.
 
-        :param email: User email address.
+        :param email: User email address (must already exist on tenant).
         :return: API response dict.
         """
         self._ensure_connected()
         log.info("Sending email invite to %s", email)
-        response = self._users.create_user(
-            email=email, send_invite=True, warn_duplicate=False,
-        )
+        response = self._users.send_invite(email=email)
         log.info("Email invite sent to %s", email)
         return response
 

@@ -49,6 +49,7 @@ cache/
 # Encrypted password and key — NEVER commit these
 data/.secret.key
 data/.password.enc
+data/.passwords.enc
 
 # Base version installers — large binaries, do not commit
 data/base_version/

@@ -6,11 +6,22 @@ External imports are deferred to create() so the module can be
 imported without nsclient installed (e.g. during testing or --help).
 """
 
+import json
 import logging
+import subprocess
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class NsConfigInfo:
+    """Information extracted from a local NSClient nsconfig.json."""
+    tenant_hostname: str
+    config_name: str
 
 
 class LocalClient:
@@ -21,10 +32,52 @@ class LocalClient:
     and build downloads.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, platform: str = "windows") -> None:
         self._client: Optional[Any] = None
-        self._platform: str = "windows"
+        self._platform: str = platform
         self._email: str = ""
+
+    NSCONFIG_PATH = Path(r"C:\ProgramData\netskope\stagent\nsconfig.json")
+
+    @staticmethod
+    def detect_tenant_from_nsconfig(
+        nsconfig_path: Path | None = None,
+    ) -> NsConfigInfo | None:
+        """
+        Detect tenant hostname and client config name from a local
+        NSClient installation.
+
+        Reads nsconfig.json, extracts ``nsgw.host`` (strips ``gateway-``
+        prefix) and ``clientConfig.configurationName``.
+
+        :param nsconfig_path: Override path to nsconfig.json (for testing).
+        :return: NsConfigInfo with tenant_hostname and config_name,
+                 or None if nsconfig.json is missing / unreadable.
+        """
+        path = nsconfig_path or LocalClient.NSCONFIG_PATH
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            gateway_host: str = config.get("nsgw", {}).get("host", "")
+            if not gateway_host:
+                return None
+            hostname = (
+                gateway_host[len("gateway-"):]
+                if gateway_host.startswith("gateway-")
+                else gateway_host
+            )
+            config_name: str = (
+                config.get("clientConfig", {}).get("configurationName", "")
+            )
+            return NsConfigInfo(
+                tenant_hostname=hostname,
+                config_name=config_name,
+            )
+        except Exception as exc:
+            log.warning("Failed to read nsconfig.json: %s", exc)
+            return None
 
     @property
     def is_initialized(self) -> bool:
@@ -115,12 +168,72 @@ class LocalClient:
         self._client.install(setup_file_path=setup_file_path)
         log.info("Client installation completed")
 
+    def install_msi(self, setup_file_path: str) -> None:
+        """
+        Install the client using msiexec silent install (Windows).
+
+        :param setup_file_path: Full path to the MSI installer.
+        """
+        log.info("Installing via msiexec: %s", setup_file_path)
+        result = subprocess.run(
+            ["msiexec", "/i", setup_file_path, "/q"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"msiexec failed (exit code {result.returncode}): {result.stderr}"
+            )
+        log.info("msiexec install completed")
+
     def uninstall(self) -> None:
         """Uninstall the currently installed client."""
         self._ensure_initialized()
         log.info("Uninstalling client")
         self._client.uninstall()
         log.info("Client uninstalled")
+
+    # ── Service ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def is_service_running(service_name: str = "stAgentSvc") -> bool:
+        """
+        Check if a Windows service is running via sc query.
+
+        :param service_name: Windows service name.
+        :return: True if service state is RUNNING.
+        """
+        try:
+            result = subprocess.run(
+                ["sc", "query", service_name],
+                capture_output=True, text=True, timeout=10,
+            )
+            return "RUNNING" in result.stdout
+        except Exception:
+            return False
+
+    @staticmethod
+    def wait_for_service(
+        service_name: str = "stAgentSvc",
+        timeout: int = 60,
+        interval: int = 5,
+    ) -> bool:
+        """
+        Poll until a Windows service is running.
+
+        :param service_name: Windows service name.
+        :param timeout: Max seconds to wait.
+        :param interval: Seconds between checks.
+        :return: True if service started, False if timed out.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            if LocalClient.is_service_running(service_name):
+                log.info("Service %s is running", service_name)
+                return True
+            log.debug("Waiting for service %s...", service_name)
+            time.sleep(interval)
+        log.warning("Service %s not running after %ds", service_name, timeout)
+        return False
 
     # ── Config / Restart ─────────────────────────────────────────────
 

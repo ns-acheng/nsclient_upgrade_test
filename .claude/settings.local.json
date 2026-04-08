@@ -9,7 +9,11 @@
       "Bash(pip show:*)",
       "Bash(pip install:*)",
       "Bash(python:*)",
-      "Bash(git check-ignore:*)"
+      "Bash(git check-ignore:*)",
+      "Bash(xargs cat:*)",
+      "Bash(xargs ls:*)",
+      "Bash(find . -type f \\\\\\( -name \"*.json\" -o -name \"*.py\" \\\\\\) -exec grep -l \"Time\\\\|time\\\\|Hour\\\\|hour\\\\|schedule\\\\|Schedule\\\\|upgrade\" {} \\\\;)",
+      "Bash(find C:\\\\git\\\\nsclient_tests:*)"
     ]
   }
 }

@@ -313,6 +313,71 @@ class TestDeviceQueries:
         )
 
 
+# ── Upgrade Schedule ─────────────────────────────────────────────────
+
+
+class TestUpgradeSchedule:
+    """Tests for set_upgrade_schedule."""
+
+    @patch("util_webui.datetime")
+    def test_set_upgrade_schedule_default(
+        self, mock_dt: MagicMock, connected_client: tuple,
+    ) -> None:
+        """set_upgrade_schedule posts useScheduledUpgrade with time = now + 2 min."""
+        client, mocks = connected_client
+        config_instance = mocks["ClientConfiguration"].return_value
+        config_instance.update_client_config.return_value = {"status": "success"}
+
+        from datetime import datetime as real_datetime
+        fake_now = real_datetime(2026, 4, 8, 14, 30)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: real_datetime(*a, **kw)
+
+        client.set_upgrade_schedule()
+
+        config_instance.update_client_config.assert_called_once_with(
+            search_config="",
+            useScheduledUpgrade={
+                "frequencyType": "daily",
+                "weekDay": [],
+                "weekOfTheMonth": [],
+                "time": "14:32",
+            },
+        )
+
+    @patch("util_webui.datetime")
+    def test_set_upgrade_schedule_custom_minutes(
+        self, mock_dt: MagicMock, connected_client: tuple,
+    ) -> None:
+        """set_upgrade_schedule respects custom minutes_from_now."""
+        client, mocks = connected_client
+        config_instance = mocks["ClientConfiguration"].return_value
+        config_instance.update_client_config.return_value = {"status": "success"}
+
+        from datetime import datetime as real_datetime
+        fake_now = real_datetime(2026, 4, 8, 23, 55)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: real_datetime(*a, **kw)
+
+        client.set_upgrade_schedule(minutes_from_now=10, search_config="my_config")
+
+        config_instance.update_client_config.assert_called_once_with(
+            search_config="my_config",
+            useScheduledUpgrade={
+                "frequencyType": "daily",
+                "weekDay": [],
+                "weekOfTheMonth": [],
+                "time": "00:05",
+            },
+        )
+
+    def test_set_upgrade_schedule_raises_when_not_connected(self) -> None:
+        """set_upgrade_schedule raises when not connected."""
+        client = WebUIClient()
+        with pytest.raises(RuntimeError, match="Not connected"):
+            client.set_upgrade_schedule()
+
+
 # ── Email Invite ─────────────────────────────────────────────────────
 
 
@@ -320,17 +385,15 @@ class TestEmailInvite:
     """Tests for send_email_invite."""
 
     def test_send_email_invite(self, connected_client: tuple) -> None:
-        """send_email_invite calls create_user with send_invite=True."""
+        """send_email_invite calls send_invite on existing user."""
         client, mocks = connected_client
         users_instance = mocks["Users"].return_value
-        users_instance.create_user.return_value = {"status": "success"}
+        users_instance.send_invite.return_value = {"status": "success"}
 
         client.send_email_invite("user@example.com")
 
-        users_instance.create_user.assert_called_once_with(
+        users_instance.send_invite.assert_called_once_with(
             email="user@example.com",
-            send_invite=True,
-            warn_duplicate=False,
         )
 
     def test_send_email_invite_raises_when_not_connected(self) -> None:

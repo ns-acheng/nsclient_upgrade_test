@@ -24,6 +24,7 @@ class TenantConfig:
     hostname: str = ""
     username: str = ""
     password: str = ""
+    config_name: str = ""
 
 
 @dataclass
@@ -84,6 +85,7 @@ def load_config(
             hostname=tenant_raw.get("hostname", ""),
             username=tenant_raw.get("username", ""),
             password=tenant_raw.get("password", ""),
+            config_name=tenant_raw.get("config_name", ""),
         ),
         client=ClientConfig(
             platform=client_raw.get("platform", "windows"),
