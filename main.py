@@ -396,6 +396,7 @@ def main() -> int:
             print(f"  Auto-detected tenant: {ns_info.tenant_hostname}")
         if not cfg.tenant.config_name and ns_info.config_name:
             cfg.tenant.config_name = ns_info.config_name
+            print(f"  Auto-detected config: {ns_info.config_name}")
 
     # Resolve password BEFORE logging starts so the prompt is not buried
     #   1. CLI --password flag  (already in cfg)

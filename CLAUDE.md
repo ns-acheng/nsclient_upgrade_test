@@ -98,6 +98,40 @@ log/                 # Log output
 - Validate all user inputs and configuration values
 - Avoid shell command injection
 
+## NSClient Knowledge
+
+### nsconfig.json
+
+The local Netskope Client stores its configuration at
+`C:\ProgramData\netskope\stagent\nsconfig.json`. Key fields used by this tool:
+
+- **`nsgw.host`** — Gateway hostname. Strip the `gateway-` prefix to get the
+  tenant hostname (e.g. `gateway-tenant.goskope.com` → `tenant.goskope.com`).
+- **`clientConfig.configurationName`** — The client configuration name assigned
+  to this device on the tenant (e.g. `"acheng config"`). This is **not** the
+  default config. All WebUI API calls (`update_client_config`,
+  `disable_auto_upgrade`, `enable_upgrade_*`, `set_upgrade_schedule`) must pass
+  the correct `config_name` as `search_config` so changes apply to the right
+  configuration — otherwise they silently save to the default tenant config.
+
+### Upgrade Schedule (useScheduledUpgrade)
+
+The tenant's `saveClientConfig` API accepts a `useScheduledUpgrade` field to
+control when auto-upgrades are triggered:
+
+```json
+"useScheduledUpgrade": {
+    "frequencyType": "daily",
+    "weekDay": [],
+    "weekOfTheMonth": [],
+    "time": "16:54"
+}
+```
+
+This is passed as a kwarg through `pylark-webapi-lib`'s
+`ClientConfiguration.update_client_config()`, which already calls
+`saveClientConfig` under the hood — no library changes needed.
+
 ## Git Workflow
 
 - Main branch: `master`

@@ -103,8 +103,14 @@ class UpgradeRunner:
         start_time = time.time()
         log.info("=" * 70)
         log.info("SCENARIO: Upgrade to Latest Release")
+        log.info("  config_name: %s", self.config_name or "(default)")
         log.info("  from_version: %s", from_version)
         log.info("=" * 70)
+        if not self.config_name:
+            log.warning(
+                "config_name is empty — API calls will target the default "
+                "tenant config. Set config_name via nsconfig.json or --config."
+            )
 
         try:
             # Phase 1: Ensure base client is installed (no nsclient needed)
@@ -195,8 +201,14 @@ class UpgradeRunner:
         start_time = time.time()
         log.info("=" * 70)
         log.info("SCENARIO: Upgrade to Golden Release")
+        log.info("  config_name: %s", self.config_name or "(default)")
         log.info("  dot: %s, from_version: %s", dot, from_version)
         log.info("=" * 70)
+        if not self.config_name:
+            log.warning(
+                "config_name is empty — API calls will target the default "
+                "tenant config. Set config_name via nsconfig.json or --config."
+            )
 
         try:
             # Resolve latest golden version for auto-pick before install
@@ -307,8 +319,14 @@ class UpgradeRunner:
         start_time = time.time()
         log.info("=" * 70)
         log.info("SCENARIO: Auto-Upgrade Disabled Verification")
+        log.info("  config_name: %s", self.config_name or "(default)")
         log.info("  from_version: %s", from_version)
         log.info("=" * 70)
+        if not self.config_name:
+            log.warning(
+                "config_name is empty — API calls will target the default "
+                "tenant config. Set config_name via nsconfig.json or --config."
+            )
 
         try:
             # Phase 1: Ensure base client is installed (no nsclient needed)

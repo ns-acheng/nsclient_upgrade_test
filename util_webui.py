@@ -241,8 +241,8 @@ class WebUIClient:
             "time": upgrade_time,
         }
         log.info(
-            "Setting upgrade schedule: time=%s (now + %d min)",
-            upgrade_time, minutes_from_now,
+            "Setting upgrade schedule: time=%s (now + %d min), config=%r",
+            upgrade_time, minutes_from_now, search_config or "(default)",
         )
         return self.update_client_config(
             search_config=search_config,
