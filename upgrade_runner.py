@@ -102,7 +102,8 @@ class UpgradeRunner:
         config_name: str = "",
         host_name: Optional[str] = None,
         email: Optional[str] = None,
-        is_64_bit: bool = False,
+        source_64_bit: bool = False,
+        target_64_bit: bool = False,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -115,7 +116,8 @@ class UpgradeRunner:
                             search_config to WebUI API calls.
         :param host_name: Device hostname for WebUI verification.
         :param email: User email for WebUI verification.
-        :param is_64_bit: Whether to use 64-bit client installer (Windows).
+        :param source_64_bit: Whether the base (source) install is 64-bit.
+        :param target_64_bit: Whether the upgrade target is 64-bit.
         """
         self.webui = webui
         self.client = client
@@ -123,7 +125,8 @@ class UpgradeRunner:
         self.config_name = config_name
         self.host_name = host_name or socket.gethostname()
         self.email = email or client.email
-        self.is_64_bit = is_64_bit
+        self.source_64_bit = source_64_bit
+        self.target_64_bit = target_64_bit
 
     # ── Upgrade Scenarios ────────────────────────────────────────────
 
@@ -175,11 +178,11 @@ class UpgradeRunner:
             # Trigger upgrade via WebUI
             self.webui.disable_auto_upgrade(search_config=self.config_name)
             self.webui.set_update_win64bit(
-                enable=self.is_64_bit, search_config=self.config_name,
+                enable=self.target_64_bit, search_config=self.config_name,
             )
             self.webui.enable_upgrade_latest(search_config=self.config_name)
             self.client.sync_config_from_tenant(
-                is_64_bit=self.is_64_bit, wait_seconds=10,
+                is_64_bit=self.source_64_bit, wait_seconds=10,
             )
 
             # Poll for upgrade
@@ -304,13 +307,13 @@ class UpgradeRunner:
             # Trigger golden upgrade via WebUI
             self.webui.disable_auto_upgrade(search_config=self.config_name)
             self.webui.set_update_win64bit(
-                enable=self.is_64_bit, search_config=self.config_name,
+                enable=self.target_64_bit, search_config=self.config_name,
             )
             self.webui.enable_upgrade_golden(
                 golden_version, dot=dot, search_config=self.config_name,
             )
             self.client.sync_config_from_tenant(
-                is_64_bit=self.is_64_bit, wait_seconds=10,
+                is_64_bit=self.source_64_bit, wait_seconds=10,
             )
 
             # Poll for upgrade
@@ -427,7 +430,9 @@ class UpgradeRunner:
             # Post checks
             service_running = self._verify_service_running()
             validation_ok, exe_validation, uninstall_entry = (
-                self._validate_pre_report(version_after)
+                self._validate_pre_report(
+                    version_after, is_64_bit=self.source_64_bit,
+                )
             )
             webui_version = self._verify_webui_version(version_after)
 
@@ -508,7 +513,7 @@ class UpgradeRunner:
         :param invite_email: Email to send enrollment invite before install.
         """
         # Step 1: Find base installer for version comparison
-        base_filename = self.client.get_installer_filename(is_64_bit=self.is_64_bit)
+        base_filename = self.client.get_installer_filename(is_64_bit=self.source_64_bit)
         base_installer = self._find_base_installer(base_filename)
 
         # Step 2: Read MSI subject to get base version
@@ -898,10 +903,10 @@ class UpgradeRunner:
         but the installed 64-bit client reports '136.0.4.2612 (64-bit)'.
 
         :param version: Base version string from the API.
-        :param is_64_bit: Override bitness flag (defaults to self.is_64_bit).
+        :param is_64_bit: Override bitness flag (defaults to self.target_64_bit).
         :return: Version with suffix if 64-bit, unchanged otherwise.
         """
-        use_64 = is_64_bit if is_64_bit is not None else self.is_64_bit
+        use_64 = is_64_bit if is_64_bit is not None else self.target_64_bit
         if use_64 and not version.endswith("(64-bit)"):
             return f"{version} (64-bit)"
         return version
@@ -909,6 +914,7 @@ class UpgradeRunner:
     def _validate_pre_report(
         self,
         version_after: str,
+        is_64_bit: Optional[bool] = None,
     ) -> tuple[bool, ExeValidationResult, UninstallEntryResult]:
         """
         Run pre-report validation: executables and uninstall registry.
@@ -920,10 +926,13 @@ class UpgradeRunner:
         2. Windows uninstall registry entry exists.
 
         :param version_after: The version to validate against.
+        :param is_64_bit: Bitness for install dir lookup (defaults
+                          to target_64_bit).
         :return: (all_valid, exe_result, uninstall_result).
         """
+        use_64 = is_64_bit if is_64_bit is not None else self.target_64_bit
         exe_validation = self.client.verify_executables(
-            is_64_bit=self.is_64_bit,
+            is_64_bit=use_64,
             expected_version=version_after,
         )
         if not exe_validation.valid:
@@ -974,7 +983,7 @@ class UpgradeRunner:
         if self.config_name:
             return
         log.info("config_name is empty — syncing config from tenant")
-        self.client.sync_config_from_tenant(is_64_bit=self.is_64_bit)
+        self.client.sync_config_from_tenant(is_64_bit=self.source_64_bit)
         ns_info = self.client.detect_tenant_from_nsconfig()
         if ns_info and ns_info.config_name:
             self.config_name = ns_info.config_name
@@ -994,7 +1003,6 @@ class UpgradeRunner:
         from_version: Optional[str] = None,
         dot: bool = False,
         invite_email: Optional[str] = None,
-        target_64_bit: Optional[bool] = None,
         stabilize_wait: int = 300,
     ) -> UpgradeResult:
         """
@@ -1009,17 +1017,18 @@ class UpgradeRunner:
         :param from_version: Build version for download fallback.
         :param dot: Enable dot release (golden only).
         :param invite_email: Email to send enrollment invite.
-        :param target_64_bit: Target bitness for upgrade (defaults to self.is_64_bit).
         :param stabilize_wait: Seconds to wait in verify phase after reboot.
         :return: UpgradeResult (setup outcome, not upgrade outcome).
         """
         scenario = f"reboot_interrupt_setup({target_type}, timing={reboot_timing})"
         start_time = time.time()
-        t64 = target_64_bit if target_64_bit is not None else self.is_64_bit
         log.info("=" * 70)
         log.info("SCENARIO: Reboot-Interrupt Setup (Phase 1)")
         log.info("  target: %s, reboot_timing: %s", target_type, reboot_timing)
-        log.info("  source_64_bit: %s, target_64_bit: %s", self.is_64_bit, t64)
+        log.info(
+            "  source_64_bit: %s, target_64_bit: %s",
+            self.source_64_bit, self.target_64_bit,
+        )
         log.info("  config_name: %s", self.config_name or "(default)")
         log.info("=" * 70)
 
@@ -1044,13 +1053,13 @@ class UpgradeRunner:
                     expected = sorted(all_versions[golden_version], key=_version_key)[-1]
                 else:
                     expected = sorted(all_versions[golden_version], key=_version_key)[0]
-            expected = self._apply_64bit_suffix(expected, is_64_bit=t64)
+            expected = self._apply_64bit_suffix(expected)
             log.info("Expected version after upgrade: %s", expected)
 
             # Enable upgrade on tenant
             self.webui.disable_auto_upgrade(search_config=self.config_name)
             self.webui.set_update_win64bit(
-                enable=t64, search_config=self.config_name,
+                enable=self.target_64_bit, search_config=self.config_name,
             )
             if target_type == "latest":
                 self.webui.enable_upgrade_latest(search_config=self.config_name)
@@ -1059,7 +1068,7 @@ class UpgradeRunner:
                     golden_version, dot=dot, search_config=self.config_name,
                 )
             self.client.sync_config_from_tenant(
-                is_64_bit=t64, wait_seconds=10,
+                is_64_bit=self.source_64_bit, wait_seconds=10,
             )
 
             # Save state for verify phase
@@ -1070,8 +1079,8 @@ class UpgradeRunner:
                 target_type=target_type,
                 expected_version=expected,
                 reboot_timing=reboot_timing,
-                source_64_bit=self.is_64_bit,
-                target_64_bit=t64,
+                source_64_bit=self.source_64_bit,
+                target_64_bit=self.target_64_bit,
                 config_name=self.config_name,
                 stabilize_wait=stabilize_wait,
                 timestamp=datetime.now().isoformat(),

@@ -625,7 +625,7 @@ class TestEnsureClientInstalled:
             upgrade_cfg=fast_cfg,
             host_name="test-host",
             email="test@gmail.com",
-            is_64_bit=True,
+            source_64_bit=True,
         )
 
         with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
@@ -1465,13 +1465,13 @@ class TestRebootInterruptSetup:
             upgrade_cfg=fast_cfg,
             host_name="test-host",
             email="test@gmail.com",
-            is_64_bit=True,
+            source_64_bit=True,
+            target_64_bit=False,
         )
 
         result = runner_64.run_reboot_interrupt_setup(
             target_type="latest",
             reboot_timing="mid",
-            target_64_bit=False,
         )
 
         assert result.success is True

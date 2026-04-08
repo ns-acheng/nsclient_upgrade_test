@@ -647,6 +647,10 @@ class LocalClient:
         install_dir = LocalClient.get_install_dir(is_64_bit)
         watchdog = LocalClient.is_watchdog_mode(nsconfig_path)
 
+        # Strip "(64-bit)" suffix — the nsclient library appends it for
+        # display, but the actual executable ProductVersion is bare.
+        clean_expected = expected_version.replace(" (64-bit)", "")
+
         exe_list = list(REQUIRED_EXECUTABLES)
         if watchdog:
             exe_list.append(WATCHDOG_EXECUTABLE)
@@ -663,13 +667,13 @@ class LocalClient:
                 continue
             present.append(exe_name)
             file_ver = LocalClient.get_file_version(exe_path)
-            if file_ver and file_ver != expected_version:
+            if file_ver and file_ver != clean_expected:
                 version_mismatches.append(
-                    f"{exe_name}: {file_ver} (expected {expected_version})"
+                    f"{exe_name}: {file_ver} (expected {clean_expected})"
                 )
                 log.warning(
                     "Version mismatch: %s is %s, expected %s",
-                    exe_name, file_ver, expected_version,
+                    exe_name, file_ver, clean_expected,
                 )
             elif file_ver:
                 log.info("Verified %s version: %s", exe_name, file_ver)

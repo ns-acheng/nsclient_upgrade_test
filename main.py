@@ -94,8 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build version for download fallback (e.g. 123.0.0)",
     )
     upgrade_parser.add_argument(
-        "--64bit", dest="is_64_bit", action="store_true",
-        help="Use 64-bit client installer (Windows only)",
+        "--source-64bit", dest="source_64_bit", action="store_true",
+        help="Source (base) install is 64-bit",
+    )
+    upgrade_parser.add_argument(
+        "--target-64bit", dest="target_64_bit", action="store_true",
+        help="Upgrade target is 64-bit",
     )
     upgrade_parser.add_argument(
         "--email", type=str, default=None,
@@ -112,8 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build version for download fallback (e.g. 123.0.0)",
     )
     disable_parser.add_argument(
-        "--64bit", dest="is_64_bit", action="store_true",
-        help="Use 64-bit client installer (Windows only)",
+        "--source-64bit", dest="source_64_bit", action="store_true",
+        help="Source (base) install is 64-bit",
     )
     disable_parser.add_argument(
         "--email", type=str, default=None,
@@ -139,12 +143,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build version for download fallback (e.g. 123.0.0)",
     )
     reboot_setup_parser.add_argument(
-        "--64bit", dest="is_64_bit", action="store_true",
-        help="Source install is 64-bit",
+        "--source-64bit", dest="source_64_bit", action="store_true",
+        help="Source (base) install is 64-bit",
     )
     reboot_setup_parser.add_argument(
-        "--target-64bit", dest="target_64_bit", action="store_true", default=None,
-        help="Upgrade target is 64-bit (defaults to --64bit value)",
+        "--target-64bit", dest="target_64_bit", action="store_true",
+        help="Upgrade target is 64-bit",
     )
     reboot_setup_parser.add_argument(
         "--email", type=str, default=None,
@@ -339,7 +343,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         client=client,
         upgrade_cfg=cfg.upgrade,
         config_name=cfg.tenant.config_name,
-        is_64_bit=args.is_64_bit,
+        source_64_bit=args.source_64_bit,
+        target_64_bit=args.target_64_bit,
     )
 
     # Execute scenario
@@ -380,7 +385,7 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         client=client,
         upgrade_cfg=cfg.upgrade,
         config_name=cfg.tenant.config_name,
-        is_64_bit=args.is_64_bit,
+        source_64_bit=args.source_64_bit,
     )
 
     result = runner.run_upgrade_disabled(
@@ -403,10 +408,10 @@ def cmd_reboot_setup(cfg: ToolConfig, args: argparse.Namespace) -> int:
         client=client,
         upgrade_cfg=cfg.upgrade,
         config_name=cfg.tenant.config_name,
-        is_64_bit=args.is_64_bit,
+        source_64_bit=args.source_64_bit,
+        target_64_bit=args.target_64_bit,
     )
 
-    target_64 = args.target_64_bit if args.target_64_bit is not None else args.is_64_bit
     target_type = "golden" if args.target == "golden-dot" else args.target
 
     result = runner.run_reboot_interrupt_setup(
@@ -415,7 +420,6 @@ def cmd_reboot_setup(cfg: ToolConfig, args: argparse.Namespace) -> int:
         from_version=args.from_version,
         dot=(args.target == "golden-dot"),
         invite_email=args.email,
-        target_64_bit=target_64,
         stabilize_wait=args.stabilize_wait,
     )
     _print_result(result)

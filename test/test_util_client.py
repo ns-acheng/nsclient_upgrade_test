@@ -384,6 +384,26 @@ class TestVerifyExecutables:
         assert result.valid is False
         assert len(result.version_mismatches) > 0
 
+    def test_64bit_suffix_stripped(self, tmp_path: Path) -> None:
+        """'(64-bit)' suffix in expected_version is stripped before comparing."""
+        for exe in REQUIRED_EXECUTABLES:
+            (tmp_path / exe).touch()
+
+        nsconfig = tmp_path / "nsconfig.json"
+        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+
+        # File version is bare; expected has the display suffix
+        with patch("util_client.INSTALL_DIR_64", tmp_path), \
+             patch.object(LocalClient, "get_file_version", return_value="135.1.10.2611"):
+            result = LocalClient.verify_executables(
+                is_64_bit=True,
+                expected_version="135.1.10.2611 (64-bit)",
+                nsconfig_path=nsconfig,
+            )
+
+        assert result.valid is True
+        assert len(result.version_mismatches) == 0
+
 
 # ── Uninstall registry entry ───────────────────────────────────────
 
