@@ -131,7 +131,7 @@ class WebUIClient:
         versions = self.get_release_versions()
         version_list = [
             key for key in sorted(versions)
-            if key not in ("goldenversions", "latestversion")
+            if key[0:1].isdigit() and "." in key
         ]
         return version_list
 

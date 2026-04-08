@@ -271,7 +271,7 @@ def cmd_versions(cfg: ToolConfig) -> int:
 
     print("\n  All major releases:")
     for key in sorted(versions):
-        if key in skip_keys:
+        if not key[0:1].isdigit() or "." not in key:
             continue
         dot_releases = versions[key]
         if isinstance(dot_releases, list):

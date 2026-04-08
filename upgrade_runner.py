@@ -162,7 +162,9 @@ class UpgradeRunner:
 
             # Get expected target version
             all_versions = self.webui.get_release_versions()
-            expected = all_versions["latestversion"]
+            expected = self._apply_64bit_suffix(
+                all_versions["latestversion"],
+            )
             log.info("Target latest version: %s", expected)
 
             # Trigger upgrade via WebUI
@@ -294,6 +296,7 @@ class UpgradeRunner:
                 expected = sorted(all_versions[golden_version])[-1]
             else:
                 expected = sorted(all_versions[golden_version])[0]
+            expected = self._apply_64bit_suffix(expected)
             log.info("Expected version after upgrade: %s", expected)
 
             # Trigger golden upgrade via WebUI
@@ -794,6 +797,26 @@ class UpgradeRunner:
             log.warning("Failed to verify WebUI version: %s", exc)
             return "error"
 
+    def _apply_64bit_suffix(
+        self,
+        version: str,
+        is_64_bit: Optional[bool] = None,
+    ) -> str:
+        """
+        Append ' (64-bit)' to a version string when targeting 64-bit.
+
+        The WebUI API returns bare version numbers (e.g. '136.0.4.2612'),
+        but the installed 64-bit client reports '136.0.4.2612 (64-bit)'.
+
+        :param version: Base version string from the API.
+        :param is_64_bit: Override bitness flag (defaults to self.is_64_bit).
+        :return: Version with suffix if 64-bit, unchanged otherwise.
+        """
+        use_64 = is_64_bit if is_64_bit is not None else self.is_64_bit
+        if use_64 and not version.endswith("(64-bit)"):
+            return f"{version} (64-bit)"
+        return version
+
     def _validate_pre_report(
         self,
         version_after: str,
@@ -932,6 +955,7 @@ class UpgradeRunner:
                     expected = sorted(all_versions[golden_version])[-1]
                 else:
                     expected = sorted(all_versions[golden_version])[0]
+            expected = self._apply_64bit_suffix(expected, is_64_bit=t64)
             log.info("Expected version after upgrade: %s", expected)
 
             # Enable upgrade on tenant
