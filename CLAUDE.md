@@ -128,6 +128,12 @@ must sync with the tenant first:
 Wait ~30 seconds after running `nsdiag -u` for the config to be written to
 `nsconfig.json`, then re-read it to get the correct `configurationName`.
 
+### 64-bit Upgrade Flag (updateWin64Bit)
+
+The `saveClientConfig` API accepts `updateWin64Bit` (0 or 1) to control
+whether the tenant pushes 32-bit or 64-bit client installers during
+auto-upgrade. Set via `update_client_config(updateWin64Bit=1)`.
+
 ### Upgrade Schedule (useScheduledUpgrade)
 
 The tenant's `saveClientConfig` API accepts a `useScheduledUpgrade` field to

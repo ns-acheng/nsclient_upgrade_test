@@ -7,13 +7,17 @@ import json
 import logging
 import shutil
 import socket
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from util_client import LocalClient
-from util_config import UpgradeConfig
+from util_client import LocalClient, SERVICES
+from util_config import (
+    UpgradeConfig, RebootTestState,
+    save_reboot_state, load_reboot_state, clear_reboot_state,
+)
 from util_webui import WebUIClient
 
 BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
@@ -41,6 +45,32 @@ class PollResult:
     changed: bool
     final_version: str
     elapsed_seconds: float
+
+
+# Timing presets for reboot during upgrade (seconds)
+REBOOT_TIMING_PRESETS: dict[str, int] = {
+    "early": 30,    # During download/prep
+    "mid":   60,    # During old service removal
+    "late":  90,    # During new service/driver install
+}
+
+
+@dataclass
+class RebootVerifyResult:
+    """Result of the reboot-verify phase."""
+    success: bool
+    scenario: str
+    version_before: str
+    version_after: str
+    expected_version: str
+    upgrade_completed: bool
+    rolled_back: bool
+    services: dict[str, dict[str, Any]]
+    watchdog_binpath: str
+    watchdog_binpath_valid: bool
+    install_dir_valid: bool
+    elapsed_seconds: float
+    message: str
 
 
 class UpgradeRunner:
@@ -129,6 +159,9 @@ class UpgradeRunner:
 
             # Trigger upgrade via WebUI
             self.webui.disable_auto_upgrade(search_config=self.config_name)
+            self.webui.set_update_win64bit(
+                enable=self.is_64_bit, search_config=self.config_name,
+            )
             self.webui.enable_upgrade_latest(search_config=self.config_name)
             self.webui.set_upgrade_schedule(
                 minutes_from_now=2, search_config=self.config_name,
@@ -247,6 +280,9 @@ class UpgradeRunner:
 
             # Trigger golden upgrade via WebUI
             self.webui.disable_auto_upgrade(search_config=self.config_name)
+            self.webui.set_update_win64bit(
+                enable=self.is_64_bit, search_config=self.config_name,
+            )
             self.webui.enable_upgrade_golden(
                 golden_version, dot=dot, search_config=self.config_name,
             )
@@ -741,6 +777,303 @@ class UpgradeRunner:
                 "Could not detect config_name after sync — "
                 "API calls will target the default config"
             )
+
+    # ── Reboot-Interrupt Scenarios ──────────────────────────────────
+
+    def run_reboot_interrupt_setup(
+        self,
+        target_type: str,
+        reboot_timing: str,
+        from_version: Optional[str] = None,
+        dot: bool = False,
+        invite_email: Optional[str] = None,
+        target_64_bit: Optional[bool] = None,
+        stabilize_wait: int = 300,
+    ) -> UpgradeResult:
+        """
+        Phase 1: Prepare upgrade and schedule a reboot to interrupt it.
+
+        Installs base client, enables auto-upgrade, saves state to
+        ``data/reboot_state.json``, then triggers ``shutdown /r /f /t <delay>``.
+        The tool process will be killed by the reboot.
+
+        :param target_type: 'latest' or 'golden'.
+        :param reboot_timing: 'early', 'mid', 'late', or seconds as string.
+        :param from_version: Build version for download fallback.
+        :param dot: Enable dot release (golden only).
+        :param invite_email: Email to send enrollment invite.
+        :param target_64_bit: Target bitness for upgrade (defaults to self.is_64_bit).
+        :param stabilize_wait: Seconds to wait in verify phase after reboot.
+        :return: UpgradeResult (setup outcome, not upgrade outcome).
+        """
+        scenario = f"reboot_interrupt_setup({target_type}, timing={reboot_timing})"
+        start_time = time.time()
+        t64 = target_64_bit if target_64_bit is not None else self.is_64_bit
+        log.info("=" * 70)
+        log.info("SCENARIO: Reboot-Interrupt Setup (Phase 1)")
+        log.info("  target: %s, reboot_timing: %s", target_type, reboot_timing)
+        log.info("  source_64_bit: %s, target_64_bit: %s", self.is_64_bit, t64)
+        log.info("  config_name: %s", self.config_name or "(default)")
+        log.info("=" * 70)
+
+        try:
+            # Phase 1: Ensure base client is installed
+            self._ensure_client_installed(from_version, invite_email)
+            self._sync_and_detect_config()
+
+            # Phase 2: Init nsclient + read version
+            nsclient_ok = self._init_nsclient()
+            version_before = self._get_current_version()
+            log.info("Version before upgrade: %s", version_before)
+
+            # Determine expected version
+            all_versions = self.webui.get_release_versions()
+            if target_type == "latest":
+                expected = all_versions["latestversion"]
+            else:
+                golden_versions_sorted = sorted(all_versions["goldenversions"])
+                golden_version = golden_versions_sorted[-1]
+                if dot:
+                    expected = sorted(all_versions[golden_version])[-1]
+                else:
+                    expected = sorted(all_versions[golden_version])[0]
+            log.info("Expected version after upgrade: %s", expected)
+
+            # Enable upgrade on tenant
+            self.webui.disable_auto_upgrade(search_config=self.config_name)
+            self.webui.set_update_win64bit(
+                enable=t64, search_config=self.config_name,
+            )
+            if target_type == "latest":
+                self.webui.enable_upgrade_latest(search_config=self.config_name)
+            else:
+                self.webui.enable_upgrade_golden(
+                    golden_version, dot=dot, search_config=self.config_name,
+                )
+            self.webui.set_upgrade_schedule(
+                minutes_from_now=2, search_config=self.config_name,
+            )
+            if nsclient_ok:
+                self.client.update_config(
+                    wait_seconds=self.cfg.config_update_wait_seconds,
+                )
+            else:
+                log.info("Skipping local config pull (nsclient not available)")
+
+            # Save state for verify phase
+            from datetime import datetime
+            state = RebootTestState(
+                scenario="reboot_interrupt",
+                version_before=version_before,
+                target_type=target_type,
+                expected_version=expected,
+                reboot_timing=reboot_timing,
+                source_64_bit=self.is_64_bit,
+                target_64_bit=t64,
+                config_name=self.config_name,
+                stabilize_wait=stabilize_wait,
+                timestamp=datetime.now().isoformat(),
+            )
+            save_reboot_state(state)
+            log.info("Reboot state saved — ready for reboot")
+
+            # Resolve reboot delay
+            if reboot_timing in REBOOT_TIMING_PRESETS:
+                delay = REBOOT_TIMING_PRESETS[reboot_timing]
+            else:
+                delay = int(reboot_timing)
+            log.info("Scheduling reboot in %d seconds", delay)
+
+            # Trigger reboot
+            subprocess.run(
+                ["shutdown", "/r", "/f", "/t", str(delay)],
+                capture_output=True, text=True, timeout=10,
+            )
+            log.info("Reboot scheduled — process will terminate when reboot occurs")
+
+            elapsed = time.time() - start_time
+            return UpgradeResult(
+                success=True,
+                scenario=scenario,
+                version_before=version_before,
+                version_after="pending_reboot",
+                expected_version=expected,
+                webui_version="N/A",
+                elapsed_seconds=elapsed,
+                message=(
+                    f"Setup complete — reboot in {delay}s. "
+                    f"Run 'reboot-verify' after reboot."
+                ),
+            )
+
+        except Exception as exc:
+            elapsed = time.time() - start_time
+            log.exception("Reboot setup failed")
+            return UpgradeResult(
+                success=False,
+                scenario=scenario,
+                version_before="unknown",
+                version_after="unknown",
+                expected_version="unknown",
+                webui_version="unknown",
+                elapsed_seconds=elapsed,
+                message=f"Exception: {exc}",
+            )
+
+    def run_reboot_verify(
+        self,
+        stabilize_wait: Optional[int] = None,
+        state_path: Optional[Path] = None,
+    ) -> RebootVerifyResult:
+        """
+        Phase 2: After reboot, verify client recovered correctly.
+
+        Loads state from ``data/reboot_state.json``, waits for
+        stabilization, then checks services, watchdog binpath,
+        installed version, and install directory.
+
+        :param stabilize_wait: Override seconds to wait (default from state).
+        :param state_path: Override path to reboot state file (for testing).
+        :return: RebootVerifyResult with all check outcomes.
+        """
+        start_time = time.time()
+
+        # Load saved state
+        state = load_reboot_state(path=state_path)
+        if state is None:
+            return RebootVerifyResult(
+                success=False,
+                scenario="reboot_verify",
+                version_before="unknown",
+                version_after="unknown",
+                expected_version="unknown",
+                upgrade_completed=False,
+                rolled_back=False,
+                services={},
+                watchdog_binpath="",
+                watchdog_binpath_valid=False,
+                install_dir_valid=False,
+                elapsed_seconds=time.time() - start_time,
+                message="No reboot state file found — run 'reboot-setup' first",
+            )
+
+        log.info("=" * 70)
+        log.info("SCENARIO: Reboot-Interrupt Verify (Phase 2)")
+        log.info("  version_before: %s", state.version_before)
+        log.info("  expected_version: %s", state.expected_version)
+        log.info("  reboot_timing: %s", state.reboot_timing)
+        log.info("  source_64_bit: %s, target_64_bit: %s",
+                 state.source_64_bit, state.target_64_bit)
+        log.info("=" * 70)
+
+        # Wait for system stabilization
+        wait = stabilize_wait if stabilize_wait is not None else state.stabilize_wait
+        log.info("Waiting %d seconds for system stabilization...", wait)
+        time.sleep(wait)
+        log.info("Stabilization wait completed")
+
+        # ── Service checks ──────────────────────────────────────────
+        services: dict[str, dict[str, Any]] = {}
+        all_services_ok = True
+        for role, svc_name in SERVICES.items():
+            info = self.client.query_service(svc_name)
+            services[role] = {
+                "name": info.name,
+                "exists": info.exists,
+                "state": info.state,
+            }
+            log.info(
+                "Service %s (%s): exists=%s, state=%s",
+                role, svc_name, info.exists, info.state,
+            )
+            if not info.exists or info.state != "RUNNING":
+                all_services_ok = False
+
+        # ── Watchdog binary path ────────────────────────────────────
+        watchdog_binpath = self.client.query_service_binpath("stwatchdog")
+        log.info("Watchdog binpath: %s", watchdog_binpath or "(empty)")
+
+        # ── Version check ───────────────────────────────────────────
+        version_after = self._get_current_version()
+        log.info("Version after reboot: %s", version_after)
+
+        upgrade_completed = (version_after == state.expected_version)
+        rolled_back = (version_after == state.version_before)
+
+        # ── Determine active bitness and verify install dir ─────────
+        if upgrade_completed:
+            active_64_bit = state.target_64_bit
+        else:
+            active_64_bit = state.source_64_bit
+        install_dir_valid = self.client.verify_install_dir(active_64_bit)
+
+        # ── Watchdog binpath validation ─────────────────────────────
+        expected_dir = str(self.client.get_install_dir(active_64_bit)).lower()
+        watchdog_binpath_valid = (
+            bool(watchdog_binpath)
+            and expected_dir in watchdog_binpath.lower()
+        )
+        if not watchdog_binpath_valid:
+            log.warning(
+                "Watchdog binpath mismatch: expected dir=%s, actual=%s",
+                expected_dir, watchdog_binpath,
+            )
+
+        # ── Determine overall success ───────────────────────────────
+        has_valid_version = upgrade_completed or rolled_back
+        success = (
+            has_valid_version
+            and all_services_ok
+            and watchdog_binpath_valid
+            and install_dir_valid
+        )
+
+        # Build message
+        if upgrade_completed:
+            version_msg = f"Upgrade completed: {state.version_before} -> {version_after}"
+        elif rolled_back:
+            version_msg = f"Rolled back to original: {version_after}"
+        else:
+            version_msg = (
+                f"Unexpected version: {version_after} "
+                f"(expected {state.expected_version} or {state.version_before})"
+            )
+
+        issues: list[str] = []
+        if not all_services_ok:
+            issues.append("not all services running")
+        if not watchdog_binpath_valid:
+            issues.append("watchdog binpath invalid")
+        if not install_dir_valid:
+            issues.append("install dir invalid")
+        if not has_valid_version:
+            issues.append("unexpected version")
+
+        message = version_msg
+        if issues:
+            message += f" — ISSUES: {', '.join(issues)}"
+
+        elapsed = time.time() - start_time
+        log.info("Verify result: success=%s — %s", success, message)
+
+        # Clean up state file on completion
+        clear_reboot_state(path=state_path)
+
+        return RebootVerifyResult(
+            success=success,
+            scenario=f"reboot_verify(timing={state.reboot_timing})",
+            version_before=state.version_before,
+            version_after=version_after,
+            expected_version=state.expected_version,
+            upgrade_completed=upgrade_completed,
+            rolled_back=rolled_back,
+            services=services,
+            watchdog_binpath=watchdog_binpath,
+            watchdog_binpath_valid=watchdog_binpath_valid,
+            install_dir_valid=install_dir_valid,
+            elapsed_seconds=elapsed,
+            message=message,
+        )
 
     def _cleanup(self) -> None:
         """Reset tenant config to disable auto-upgrade."""

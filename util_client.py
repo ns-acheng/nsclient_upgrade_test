@@ -16,6 +16,25 @@ from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
+# Install directories
+INSTALL_DIR_32 = Path(r"C:\Program Files (x86)\Netskope\STAgent")
+INSTALL_DIR_64 = Path(r"C:\Program Files\Netskope\STAgent")
+
+# Services to verify after upgrade
+SERVICES: dict[str, str] = {
+    "client":   "stAgentSvc",
+    "watchdog": "stwatchdog",
+    "driver":   "stadrv",
+}
+
+
+@dataclass
+class ServiceInfo:
+    """Parsed result of an ``sc query`` call."""
+    name: str
+    exists: bool
+    state: str
+
 
 @dataclass
 class NsConfigInfo:
@@ -225,8 +244,9 @@ class LocalClient:
         """
         log.info("Installing via msiexec: %s", setup_file_path)
         result = subprocess.run(
-            ["msiexec", "/i", setup_file_path, "/q"],
-            capture_output=True, text=True, timeout=300,
+            ["msiexec", "/i", setup_file_path, "/qn"],
+            capture_output=True, timeout=300,
+            encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
             raise RuntimeError(
@@ -378,3 +398,88 @@ class LocalClient:
         """
         self._ensure_initialized()
         return self._client.get_status()
+
+    # ── Service Queries ─────────────────────────────────────────────
+
+    @staticmethod
+    def query_service(service_name: str) -> ServiceInfo:
+        """
+        Query a Windows service via ``sc query``.
+
+        :param service_name: Windows service name (e.g. 'stAgentSvc').
+        :return: ServiceInfo with exists flag and current state.
+        """
+        try:
+            result = subprocess.run(
+                ["sc", "query", service_name],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return ServiceInfo(name=service_name, exists=False, state="")
+            # Parse STATE line, e.g. "        STATE              : 4  RUNNING "
+            state = ""
+            for line in result.stdout.splitlines():
+                if "STATE" in line:
+                    parts = line.strip().split()
+                    # Last token is the state name
+                    state = parts[-1] if parts else ""
+                    break
+            return ServiceInfo(name=service_name, exists=True, state=state)
+        except Exception as exc:
+            log.warning("sc query %s failed: %s", service_name, exc)
+            return ServiceInfo(name=service_name, exists=False, state="")
+
+    @staticmethod
+    def query_service_binpath(service_name: str) -> str:
+        """
+        Get the binary path of a Windows service via ``sc qc``.
+
+        :param service_name: Windows service name.
+        :return: BINARY_PATH_NAME value, or empty string on failure.
+        """
+        try:
+            result = subprocess.run(
+                ["sc", "qc", service_name],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return ""
+            for line in result.stdout.splitlines():
+                if "BINARY_PATH_NAME" in line:
+                    # Format: "        BINARY_PATH_NAME   : C:\path\to\exe"
+                    _, _, value = line.partition(":")
+                    return value.strip()
+            return ""
+        except Exception as exc:
+            log.warning("sc qc %s failed: %s", service_name, exc)
+            return ""
+
+    # ── Install Path Helpers ────────────────────────────────────────
+
+    @staticmethod
+    def get_install_dir(is_64_bit: bool) -> Path:
+        """
+        Return the expected install directory for the given bitness.
+
+        :param is_64_bit: True for 64-bit, False for 32-bit.
+        :return: Path to the install directory.
+        """
+        return INSTALL_DIR_64 if is_64_bit else INSTALL_DIR_32
+
+    @staticmethod
+    def verify_install_dir(is_64_bit: bool) -> bool:
+        """
+        Verify that the expected install directory exists and contains
+        the main service executable (``stAgentSvc.exe``).
+
+        :param is_64_bit: True for 64-bit, False for 32-bit.
+        :return: True if directory and key executable exist.
+        """
+        install_dir = LocalClient.get_install_dir(is_64_bit)
+        exe = install_dir / "stAgentSvc.exe"
+        exists = exe.is_file()
+        if exists:
+            log.info("Install dir verified: %s", install_dir)
+        else:
+            log.warning("Install dir missing or incomplete: %s", install_dir)
+        return exists

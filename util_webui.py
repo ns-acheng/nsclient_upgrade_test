@@ -214,6 +214,33 @@ class WebUIClient:
             goldenDotReleaseUpdate=1 if dot else 0,
         )
 
+    # ── 64-bit Upgrade Flag ──────────────────────────────────────────
+
+    def set_update_win64bit(
+        self,
+        enable: bool,
+        search_config: str = "",
+    ) -> dict[str, Any]:
+        """
+        Set the ``updateWin64Bit`` flag on the tenant config.
+
+        Controls whether the tenant pushes 64-bit or 32-bit client
+        installers during auto-upgrade.
+
+        :param enable: True for 64-bit, False for 32-bit.
+        :param search_config: Config name (empty for default).
+        :return: API response dict.
+        """
+        value = 1 if enable else 0
+        log.info(
+            "Setting updateWin64Bit=%d (config=%r)",
+            value, search_config or "(default)",
+        )
+        return self.update_client_config(
+            search_config=search_config,
+            updateWin64Bit=value,
+        )
+
     # ── Upgrade Schedule ─────────────────────────────────────────────
 
     def set_upgrade_schedule(
