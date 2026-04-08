@@ -1,0 +1,18 @@
+{
+    "tenant": {
+        "hostname": "",
+        "username": "",
+        "password": ""
+    },
+    "client": {
+        "platform": "windows",
+        "email_suffix": "",
+        "gmail_username": "",
+        "gmail_password": ""
+    },
+    "upgrade": {
+        "poll_interval_seconds": 30,
+        "max_wait_seconds": 360,
+        "config_update_wait_seconds": 15
+    }
+}
