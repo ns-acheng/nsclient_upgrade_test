@@ -13,7 +13,6 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "data" / "config.json"
-REBOOT_STATE_PATH = Path(__file__).parent / "data" / "reboot_state.json"
 
 # Fields that must never be written to the config file
 SENSITIVE_FIELDS = {"password"}
@@ -49,75 +48,6 @@ class ToolConfig:
     tenant: TenantConfig = field(default_factory=TenantConfig)
     client: ClientConfig = field(default_factory=ClientConfig)
     upgrade: UpgradeConfig = field(default_factory=UpgradeConfig)
-
-
-@dataclass
-class RebootTestState:
-    """Persisted state for the two-phase reboot-interrupt test."""
-    scenario: str           # "reboot_interrupt"
-    version_before: str     # e.g. "135.0.0.2631"
-    target_type: str        # "latest" or "golden"
-    expected_version: str   # e.g. "136.0.4.2612"
-    reboot_timing: str      # "early" / "mid" / "late" / "<N>"
-    source_64_bit: bool     # was the base install 64-bit?
-    target_64_bit: bool     # is the upgrade target 64-bit?
-    config_name: str        # tenant config name
-    stabilize_wait: int     # seconds to wait after reboot before checks
-    timestamp: str          # ISO timestamp when setup ran
-
-
-def save_reboot_state(
-    state: RebootTestState,
-    path: Optional[Path] = None,
-) -> Path:
-    """
-    Write reboot test state to JSON for the verify phase.
-
-    :param state: RebootTestState to persist.
-    :param path: Override file path (for testing).
-    :return: Path the state was saved to.
-    """
-    target = path or REBOOT_STATE_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(asdict(state), f, indent=4)
-        f.write("\n")
-    log.info("Reboot state saved to %s", target)
-    return target
-
-
-def load_reboot_state(
-    path: Optional[Path] = None,
-) -> Optional[RebootTestState]:
-    """
-    Load reboot test state from JSON.
-
-    :param path: Override file path (for testing).
-    :return: RebootTestState or None if file missing / invalid.
-    """
-    target = path or REBOOT_STATE_PATH
-    if not target.is_file():
-        log.warning("No reboot state file at %s", target)
-        return None
-    try:
-        with open(target, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return RebootTestState(**data)
-    except Exception as exc:
-        log.warning("Failed to load reboot state: %s", exc)
-        return None
-
-
-def clear_reboot_state(path: Optional[Path] = None) -> None:
-    """
-    Delete the reboot state file after verify completes.
-
-    :param path: Override file path (for testing).
-    """
-    target = path or REBOOT_STATE_PATH
-    if target.is_file():
-        target.unlink()
-        log.info("Reboot state cleared: %s", target)
 
 
 def load_config(

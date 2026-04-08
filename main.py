@@ -23,7 +23,7 @@ from util_log import setup_logging
 from util_secret import load_password, save_password, clear_password, cleanup_legacy_file
 from util_webui import WebUIClient
 from util_client import LocalClient
-from upgrade_runner import UpgradeRunner, UpgradeResult, RebootVerifyResult
+from upgrade_runner import UpgradeRunner, UpgradeResult
 
 log = logging.getLogger(__name__)
 
@@ -131,51 +131,6 @@ def build_parser() -> argparse.ArgumentParser:
     disable_parser.add_argument(
         "--email", type=str, default=None,
         help="Send email invite to this address before upgrade",
-    )
-
-    # ── reboot-setup ────────────────────────────────────────────
-    reboot_setup_parser = subparsers.add_parser(
-        "reboot-setup",
-        help="Phase 1: Enable upgrade and schedule a reboot to interrupt it",
-    )
-    reboot_setup_parser.add_argument(
-        "--target", required=True,
-        choices=["latest", "golden", "golden-dot"],
-        help="Upgrade target: latest, golden (base only), or golden-dot (with dot release)",
-    )
-    reboot_setup_parser.add_argument(
-        "--reboot-timing", required=True,
-        help="Reboot timing: 'early', 'mid', 'late', or seconds (e.g. '45')",
-    )
-    reboot_setup_parser.add_argument(
-        "--from-version", type=str, default=None,
-        help="Build version for download fallback (e.g. 123.0.0)",
-    )
-    reboot_setup_parser.add_argument(
-        "--source-64bit", dest="source_64_bit", action="store_true",
-        help="Source (base) install is 64-bit",
-    )
-    reboot_setup_parser.add_argument(
-        "--target-64bit", dest="target_64_bit", action="store_true",
-        help="Upgrade target is 64-bit",
-    )
-    reboot_setup_parser.add_argument(
-        "--email", type=str, default=None,
-        help="Send email invite to this address before install",
-    )
-    reboot_setup_parser.add_argument(
-        "--stabilize-wait", type=int, default=300,
-        help="Seconds to wait in verify phase after reboot (default: 300)",
-    )
-
-    # ── reboot-verify ───────────────────────────────────────────
-    reboot_verify_parser = subparsers.add_parser(
-        "reboot-verify",
-        help="Phase 2: Verify client recovered after reboot-interrupt",
-    )
-    reboot_verify_parser.add_argument(
-        "--stabilize-wait", type=int, default=None,
-        help="Override seconds to wait for stabilization (default: from saved state)",
     )
 
     # ── continue ────────────────────────────────────────────────
@@ -446,63 +401,6 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
-def cmd_reboot_setup(cfg: ToolConfig, args: argparse.Namespace) -> int:
-    """Phase 1: Enable upgrade and schedule reboot to interrupt it."""
-    client = LocalClient(platform=cfg.client.platform)
-
-    webui = WebUIClient()
-    if not connect_with_retry(webui, cfg):
-        return 1
-
-    runner = UpgradeRunner(
-        webui=webui,
-        client=client,
-        upgrade_cfg=cfg.upgrade,
-        config_name=cfg.tenant.config_name,
-        source_64_bit=args.source_64_bit,
-        target_64_bit=args.target_64_bit,
-    )
-
-    target_type = "golden" if args.target == "golden-dot" else args.target
-
-    result = runner.run_reboot_interrupt_setup(
-        target_type=target_type,
-        reboot_timing=args.reboot_timing,
-        from_version=args.from_version,
-        dot=(args.target == "golden-dot"),
-        invite_email=args.email,
-        stabilize_wait=args.stabilize_wait,
-    )
-    _print_result(result)
-    return 0 if result.success else 1
-
-
-def cmd_reboot_verify(cfg: ToolConfig, args: argparse.Namespace) -> int:
-    """Phase 2: Verify client recovered after reboot-interrupt."""
-    client = LocalClient(platform=cfg.client.platform)
-
-    # WebUI is optional for verify — version can come from nsclient
-    webui = WebUIClient()
-    try:
-        if connect_with_retry(webui, cfg):
-            log.info("WebUI connected for verify phase")
-    except Exception:
-        log.warning("WebUI connection failed — verify will use local checks only")
-
-    runner = UpgradeRunner(
-        webui=webui,
-        client=client,
-        upgrade_cfg=cfg.upgrade,
-        config_name=cfg.tenant.config_name,
-    )
-
-    result = runner.run_reboot_verify(
-        stabilize_wait=args.stabilize_wait,
-    )
-    _print_reboot_verify_result(result)
-    return 0 if result.success else 1
-
-
 _GREEN = "\033[92m"
 _RED = "\033[91m"
 _RESET = "\033[0m"
@@ -511,50 +409,6 @@ _RESET = "\033[0m"
 def _icon(ok: bool) -> str:
     """Return a colored PASS/FAIL tag."""
     return f"{_GREEN}PASS{_RESET}" if ok else f"{_RED}FAIL{_RESET}"
-
-
-def _print_reboot_verify_result(result: RebootVerifyResult) -> None:
-    """Print a formatted reboot-verify result summary."""
-    print(f"\n{'=' * 60}")
-    print(f"  [{_icon(result.success)}] {result.scenario}")
-    print(f"{'=' * 60}")
-    print(f"  Version before:       {result.version_before}")
-    print(f"  Version after:        {result.version_after}")
-    print(f"  Expected version:     {result.expected_version}")
-    print(f"  Upgrade completed:    {result.upgrade_completed}")
-    print(f"  Rolled back:          {result.rolled_back}")
-    print(f"  Install dir valid:    {result.install_dir_valid}")
-    print(f"  Watchdog binpath:     {result.watchdog_binpath}")
-    print(f"  Watchdog path valid:  {result.watchdog_binpath_valid}")
-    print(f"  Services:")
-    for role, info in result.services.items():
-        state_str = info.get("state", "N/A")
-        exists_str = "yes" if info.get("exists") else "NO"
-        print(f"    {role:10s} ({info.get('name', '?')}): exists={exists_str}, state={state_str}")
-    # Executable validation
-    exe = result.exe_validation
-    if exe:
-        print(f"  Executables [{_icon(exe.valid)}]:    dir={exe.install_dir}")
-        if exe.present:
-            print(f"    Present:    {', '.join(exe.present)}")
-        if exe.missing:
-            print(f"    MISSING:    {', '.join(exe.missing)}")
-        if exe.version_mismatches:
-            for m in exe.version_mismatches:
-                print(f"    MISMATCH:   {m}")
-    # Uninstall registry entry
-    unreg = result.uninstall_entry
-    if unreg:
-        print(f"  Uninstall entry [{_icon(unreg.found)}]:")
-        if unreg.found:
-            print(f"    Name:       {unreg.display_name}")
-            print(f"    Version:    {unreg.display_version}")
-            print(f"    Location:   {unreg.install_location}")
-        else:
-            print(f"    Not found in registry")
-    print(f"  Elapsed:              {result.elapsed_seconds:.1f}s")
-    print(f"  Message:              {result.message}")
-    print()
 
 
 def _print_result(result: UpgradeResult) -> None:
@@ -639,7 +493,7 @@ def main() -> int:
     #   2. Saved encrypted password  (keyed by tenant + username)
     #   3. Prompt user
     require_tenant = args.command in (
-        "versions", "upgrade", "disable-upgrade", "reboot-setup", "reboot-verify",
+        "versions", "upgrade", "disable-upgrade",
     )
     if require_tenant and cfg.tenant.hostname and cfg.tenant.username and not cfg.tenant.password:
         saved = load_password(cfg.tenant.hostname, cfg.tenant.username)
@@ -669,10 +523,6 @@ def main() -> int:
         return cmd_upgrade(cfg, args)
     elif args.command == "disable-upgrade":
         return cmd_disable_upgrade(cfg, args)
-    elif args.command == "reboot-setup":
-        return cmd_reboot_setup(cfg, args)
-    elif args.command == "reboot-verify":
-        return cmd_reboot_verify(cfg, args)
     elif args.command == "continue":
         return cmd_continue(args)
     else:
