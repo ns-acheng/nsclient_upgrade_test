@@ -709,6 +709,7 @@ class UpgradeRunner:
             with GmailBrowser(
                 email_address=invite_email,
                 is_64_bit=self.source_64_bit,
+                tenant_hostname=self.webui.hostname,
             ) as browser:
                 browser.connect()
                 url = browser.get_download_link()

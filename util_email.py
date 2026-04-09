@@ -52,10 +52,12 @@ class GmailBrowser:
         email_address: str,
         is_64_bit: bool = True,
         debug_port: int = DEFAULT_DEBUG_PORT,
+        tenant_hostname: str = "",
     ) -> None:
         self._email_address = email_address
         self._is_64_bit = is_64_bit
         self._debug_port = debug_port
+        self._tenant_hostname = tenant_hostname
         self._driver: Optional[Any] = None
 
     # -- context manager ------------------------------------------------
@@ -180,27 +182,16 @@ class GmailBrowser:
             search_box.send_keys(search_query)
             search_box.send_keys(Keys.RETURN)
 
-            # Step 4: Wait for results and click first row
+            # Step 4: Wait for results and count rows
             try:
                 WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located(
                         (By.CSS_SELECTOR, "tr.zA")
                     )
                 )
-                # Use JS click — Gmail overlays can block normal clicks
-                clicked = driver.execute_script("""
-                    var rows = document.querySelectorAll('tr.zA, tr.zE');
-                    for (var i = 0; i < rows.length; i++) {
-                        if (rows[i].offsetParent !== null) {
-                            rows[i].click();
-                            return true;
-                        }
-                    }
-                    return false;
-                """)
-                if not clicked:
-                    raise TimeoutException("No visible row")
-                log.info("Opened email")
+                row_count: int = driver.execute_script(
+                    "return document.querySelectorAll('tr.zA, tr.zE').length;"
+                )
             except TimeoutException:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
@@ -213,39 +204,81 @@ class GmailBrowser:
                 time.sleep(SEARCH_RETRY_INTERVAL)
                 continue
 
-            # Step 5: Wait for email body and find the download link
-            for link_text in link_texts:
-                xpath = (
-                    f'//a[contains(text(), "{link_text}")]'
+            # Step 5: Iterate rows, open each, check download link
+            for row_idx in range(row_count):
+                # Click the row by index
+                clicked = driver.execute_script(f"""
+                    var rows = document.querySelectorAll('tr.zA, tr.zE');
+                    if ({row_idx} < rows.length && rows[{row_idx}].offsetParent !== null) {{
+                        rows[{row_idx}].click();
+                        return true;
+                    }}
+                    return false;
+                """)
+                if not clicked:
+                    continue
+                log.info("Opened email row %d/%d", row_idx + 1, row_count)
+
+                # Find download link in email body
+                url = self._extract_link_from_body(
+                    driver, By, EC, WebDriverWait, link_texts,
                 )
-                try:
-                    link_el = WebDriverWait(driver, 15).until(
-                        EC.presence_of_element_located(
-                            (By.XPATH, xpath)
-                        )
-                    )
-                    raw_href = link_el.get_attribute("href") or ""
-                    url = self._unwrap_google_redirect(raw_href)
-                    log.info("Found download link: %s", url)
-                    return url
-                except TimeoutException:
-                    log.info(
-                        "Link text %r not found, trying next",
-                        link_text,
-                    )
+                if not url:
+                    log.info("No download link in row %d — skipping", row_idx + 1)
+                    driver.back()
+                    time.sleep(1)
                     continue
 
-            # None of the link texts matched
+                # Check tenant hostname in the link
+                if self._tenant_hostname and self._tenant_hostname not in url:
+                    log.info(
+                        "Link tenant mismatch (expected %s) — skipping row %d",
+                        self._tenant_hostname, row_idx + 1,
+                    )
+                    driver.back()
+                    time.sleep(1)
+                    continue
+
+                log.info("Found download link: %s", url)
+                return url
+
+                # Go back to search results for next row
+
+            # No matching row found in this pass
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    "Download link not found in email body "
-                    f"(tried: {link_texts})"
+                    "No email with matching tenant download link found "
+                    f"within {timeout}s (tenant={self._tenant_hostname})"
                 )
             log.info(
-                "Download link not found — retrying in %ds",
+                "No matching email found — retrying in %ds",
                 SEARCH_RETRY_INTERVAL,
             )
             time.sleep(SEARCH_RETRY_INTERVAL)
+
+    def _extract_link_from_body(
+        self, driver: Any, By: Any, EC: Any,
+        WebDriverWait: Any, link_texts: list[str],
+    ) -> str:
+        """
+        Extract the download URL from the currently opened email body.
+
+        :return: Unwrapped URL, or empty string if not found.
+        """
+        from selenium.common.exceptions import TimeoutException
+
+        for link_text in link_texts:
+            xpath = f'//a[contains(text(), "{link_text}")]'
+            try:
+                link_el = WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.XPATH, xpath))
+                )
+                raw_href = link_el.get_attribute("href") or ""
+                return self._unwrap_google_redirect(raw_href)
+            except TimeoutException:
+                log.info("Link text %r not found, trying next", link_text)
+                continue
+        return ""
 
     def close(self) -> None:
         """
