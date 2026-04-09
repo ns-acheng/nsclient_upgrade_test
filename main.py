@@ -540,8 +540,24 @@ def _prompt_password(label: str) -> str:
     return getpass.getpass(f"  {label}: ")
 
 
-def _kill_stale_chromedriver() -> None:
-    """Kill leftover chromedriver.exe processes from previous runs."""
+def _close_browsers_and_drivers() -> None:
+    """Gracefully close browsers and kill stale chromedriver processes."""
+    # Gracefully close browser windows (without killing the process tree)
+    try:
+        subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                'Get-Process -Name msedge,chrome,firefox'
+                ' -ErrorAction SilentlyContinue'
+                ' | Where-Object { $_.MainWindowHandle -ne 0 }'
+                ' | ForEach-Object { $_.CloseMainWindow() | Out-Null }',
+            ],
+            capture_output=True, timeout=15,
+        )
+    except Exception:
+        pass
+
+    # Kill leftover chromedriver.exe from previous runs
     try:
         subprocess.run(
             ["taskkill", "/F", "/IM", "chromedriver.exe"],
@@ -553,7 +569,7 @@ def _kill_stale_chromedriver() -> None:
 
 def main() -> int:
     """Main entry point."""
-    _kill_stale_chromedriver()
+    _close_browsers_and_drivers()
     parser = build_parser()
     args = parser.parse_args()
 
