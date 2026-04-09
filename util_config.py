@@ -38,7 +38,7 @@ class ClientConfig:
 class UpgradeConfig:
     """Upgrade timing and polling settings."""
     poll_interval_seconds: int = 30
-    max_wait_seconds: int = 360
+    max_wait_seconds: int = 720
     config_update_wait_seconds: int = 15
 
 

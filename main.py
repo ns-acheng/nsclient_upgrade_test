@@ -15,6 +15,7 @@ Then just run (uses saved password automatically):
 import argparse
 import getpass
 import logging
+import subprocess
 import sys
 import threading
 import time
@@ -529,8 +530,20 @@ def _prompt_password(label: str) -> str:
     return getpass.getpass(f"  {label}: ")
 
 
+def _kill_stale_chromedriver() -> None:
+    """Kill leftover chromedriver.exe processes from previous runs."""
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "chromedriver.exe"],
+            capture_output=True,
+        )
+    except Exception:
+        pass
+
+
 def main() -> int:
     """Main entry point."""
+    _kill_stale_chromedriver()
     parser = build_parser()
     args = parser.parse_args()
 

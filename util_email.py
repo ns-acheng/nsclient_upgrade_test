@@ -79,7 +79,8 @@ class GmailBrowser:
 
         If no Chrome is reachable on the port, launch a new instance
         with a local profile (``local_profile/``) and the debug port,
-        then attach.
+        then attach.  After attaching, verifies Gmail is actually
+        usable; if not, closes Chrome via DevTools and relaunches.
         """
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
@@ -96,12 +97,19 @@ class GmailBrowser:
                     "Connected to Chrome on port %d",
                     self._debug_port,
                 )
-                return
+                if self._is_gmail_ready():
+                    return
+                log.info(
+                    "Gmail not usable on existing Chrome "
+                    "— closing and relaunching"
+                )
+                self._close_chrome_via_cdp()
             except Exception:
                 log.info(
                     "Chrome on port %d not usable — relaunching",
                     self._debug_port,
                 )
+
         else:
             log.info(
                 "Nothing listening on port %d — launching Chrome",
@@ -471,6 +479,41 @@ class GmailBrowser:
                 log.info("Dismissed notification overlay")
         except Exception:
             pass
+
+    def _is_gmail_ready(self) -> bool:
+        """Navigate to Gmail and verify the search box is reachable."""
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        try:
+            self._driver.get(GMAIL_URL)
+            WebDriverWait(self._driver, 15).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR,
+                     'input[aria-label="Search mail"],'
+                     ' input[name="q"]')
+                )
+            )
+            return True
+        except Exception:
+            return False
+
+    def _close_chrome_via_cdp(self) -> None:
+        """Close Chrome via DevTools Protocol and disconnect WebDriver."""
+        if self._driver is None:
+            return
+        try:
+            self._driver.execute_cdp_cmd("Browser.close", {})
+            log.info("Closed Chrome via DevTools Protocol")
+        except Exception:
+            pass
+        try:
+            self._driver.quit()
+        except Exception:
+            pass
+        self._driver = None
+        time.sleep(3)
 
     def _launch_chrome(self) -> None:
         """Launch Chrome with a local profile and remote debugging."""
