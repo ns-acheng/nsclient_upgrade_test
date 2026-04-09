@@ -112,6 +112,7 @@ class UpgradeRunner:
         self.stop_event = stop_event or threading.Event()
         self._cloned_installer: Optional[Path] = None
         self._gmail_browser: Any = None
+        self._gmail_old_count: int = 0
         self._upgrade_enabled = False
         self._log_dir: Optional[Path] = log_dir
 
@@ -657,6 +658,7 @@ class UpgradeRunner:
         log.info("Installing base client")
 
         # Get download link from email invite (also sends the invite)
+        download_link = ""
         installer_name = None
         if invite_email:
             download_link = self._fetch_download_link_from_gmail(
@@ -715,11 +717,10 @@ class UpgradeRunner:
             log.info("Waiting 15s for tenant to accept the token")
             time.sleep(15)
 
-        # Install with msiexec
-        try:
-            self.client.install_msi(str(installer), log_dir=self._log_dir)
-        finally:
-            self._close_gmail_browser()
+        # Install with msiexec (retry on 1603 with next email)
+        self._install_msi_with_email_retry(
+            installer, base_filename, download_link,
+        )
 
         # Wait for service to start
         if not self.client.wait_for_service():
@@ -751,6 +752,7 @@ class UpgradeRunner:
             )
             self._gmail_browser.connect()
             old_count = self._gmail_browser.count_matching_emails()
+            self._gmail_old_count = old_count
             log.info(
                 "Found %d existing email(s) — will skip these",
                 old_count,
@@ -787,6 +789,102 @@ class UpgradeRunner:
             except Exception:
                 pass
             self._gmail_browser = None
+
+    def _install_msi_with_email_retry(
+        self,
+        installer: Path,
+        base_filename: str,
+        initial_url: str,
+    ) -> None:
+        """
+        Install via msiexec.  On exit code 1603 (wrong email token),
+        retry with the next Gmail email every 10 s for up to 60 s.
+
+        :param installer: Path to the MSI to install.
+        :param base_filename: Base installer name for re-resolving.
+        :param initial_url: Download URL used for *installer* (may be
+            empty if no email flow was used).
+        """
+        tried_urls: list[str] = []
+        if initial_url:
+            tried_urls.append(initial_url)
+
+        try:
+            self.client.install_msi(str(installer), log_dir=self._log_dir)
+            return
+        except RuntimeError as exc:
+            if "exit code 1603" not in str(exc):
+                raise
+            if self._gmail_browser is None:
+                raise
+            log.warning(
+                "Install failed (1603) — wrong email token, "
+                "retrying with next email",
+            )
+
+        # Clean up the bad cloned installer
+        if self._cloned_installer and self._cloned_installer.is_file():
+            self._cloned_installer.unlink()
+            self._cloned_installer = None
+
+        # Retry every 10 s for 60 s
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            log.info(
+                "Waiting for next valid email (%.0fs remaining)",
+                remaining,
+            )
+            try:
+                url = self._gmail_browser.get_download_link(
+                    skip_count=self._gmail_old_count,
+                    timeout=min(10, max(1, int(remaining))),
+                    exclude_urls=tried_urls,
+                )
+            except (TimeoutError, RuntimeError):
+                log.info("No new valid email found yet")
+                continue
+
+            tried_urls.append(url)
+            log.info("Found new download link: %s", url)
+
+            name = self._get_installer_name(url)
+            if not name:
+                log.warning(
+                    "Could not compose installer name — skipping",
+                )
+                continue
+
+            new_installer = self._resolve_installer(
+                base_filename, name,
+            )
+            if not new_installer:
+                log.warning("Could not resolve installer — skipping")
+                continue
+            self._cloned_installer = new_installer
+
+            try:
+                self.client.install_msi(
+                    str(new_installer), log_dir=self._log_dir,
+                )
+                return
+            except RuntimeError as retry_exc:
+                if "exit code 1603" not in str(retry_exc):
+                    raise
+                log.warning(
+                    "Retry also failed (1603) — trying next email",
+                )
+                if (
+                    self._cloned_installer
+                    and self._cloned_installer.is_file()
+                ):
+                    self._cloned_installer.unlink()
+                    self._cloned_installer = None
+
+        raise RuntimeError(
+            "Install failed (1603) after 60s of email "
+            "retries — aborting"
+        )
 
     @staticmethod
     def _find_base_installer(base_filename: str) -> Optional[Path]:
@@ -1259,7 +1357,8 @@ class UpgradeRunner:
         return self._log_dir
 
     def _cleanup(self) -> None:
-        """Reset tenant config and remove cloned installer."""
+        """Reset tenant config, close browser, and remove cloned installer."""
+        self._close_gmail_browser()
         if self._upgrade_enabled:
             try:
                 self.webui.disable_auto_upgrade(search_config=self.config_name)

@@ -188,6 +188,7 @@ class GmailBrowser:
         self,
         timeout: int = DEFAULT_TIMEOUT,
         skip_count: int = 0,
+        exclude_urls: Optional[list[str]] = None,
     ) -> str:
         """
         Navigate Gmail, find the invite email, and return the download URL.
@@ -197,6 +198,7 @@ class GmailBrowser:
         :param timeout: Max seconds to wait for the email to appear.
         :param skip_count: Number of old emails to ignore (newest-first).
             Pass the value returned by :meth:`count_matching_emails`.
+        :param exclude_urls: URLs to skip (already tried and failed).
         :return: Download URL string.
         :raises TimeoutError: If the email or link is not found in time.
         :raises RuntimeError: If the browser is not connected.
@@ -329,6 +331,16 @@ class GmailBrowser:
                         "Link tenant mismatch (expected %s, got %s) "
                         "— skipping row %d",
                         self._tenant_hostname, url, row_idx + 1,
+                    )
+                    driver.back()
+                    time.sleep(1)
+                    continue
+
+                # Skip URLs already tried (e.g. 1603 bad token)
+                if exclude_urls and url in exclude_urls:
+                    log.info(
+                        "Skipping already-tried URL — row %d",
+                        row_idx + 1,
                     )
                     driver.back()
                     time.sleep(1)
