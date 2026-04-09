@@ -14,13 +14,15 @@ Then just run (uses saved password automatically):
 
 import argparse
 import getpass
-import sys
 import logging
+import sys
 import threading
+import time
+from datetime import datetime
 from pathlib import Path
 
 from util_config import load_config, save_config, validate_config, ToolConfig
-from util_log import setup_logging, setup_folder_logging
+from util_log import LOG_DIR, setup_logging, setup_folder_logging
 from util_secret import load_password, save_password, clear_password, cleanup_legacy_file
 from util_webui import WebUIClient
 from util_client import LocalClient
@@ -29,6 +31,28 @@ from upgrade_runner import UpgradeRunner, UpgradeResult
 log = logging.getLogger(__name__)
 
 MAX_LOGIN_ATTEMPTS = 3
+MAX_CONNECT_RETRIES = 5
+CONNECT_RETRY_DELAY = 10  # seconds between connection retries
+
+# Connection-level exceptions worth retrying (network/timeout issues)
+_RETRIABLE_TYPES = (
+    ConnectionError, TimeoutError, OSError,
+)
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """Return True if the exception is a retriable connection/network error."""
+    exc_str = str(exc).lower()
+    # Auth errors wrapped in TimeoutError (from login thread) are NOT
+    # connection errors — they should go through the auth retry path.
+    if "invalid username or password" in exc_str:
+        return False
+    if isinstance(exc, _RETRIABLE_TYPES):
+        return True
+    # requests wraps urllib3 errors as ConnectionError
+    return any(hint in exc_str for hint in (
+        "connection", "timed out", "timeout", "maxretryerror",
+    ))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -149,8 +173,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def connect_with_retry(webui: WebUIClient, cfg: ToolConfig) -> bool:
     """
-    Try to connect to the tenant. On auth failure, clear the saved
-    password and re-prompt up to MAX_LOGIN_ATTEMPTS total tries.
+    Try to connect to the tenant with retry for both auth and connection errors.
+
+    - Auth failures: re-prompt password up to MAX_LOGIN_ATTEMPTS times.
+    - Connection errors (timeout, network): retry up to MAX_CONNECT_RETRIES
+      times with a delay, then abort gracefully.
 
     :param webui: WebUIClient instance.
     :param cfg: ToolConfig (cfg.tenant.password is updated on retry).
@@ -158,15 +185,40 @@ def connect_with_retry(webui: WebUIClient, cfg: ToolConfig) -> bool:
     """
     hostname = cfg.tenant.hostname
     username = cfg.tenant.username
-    for attempt in range(1, MAX_LOGIN_ATTEMPTS + 1):
+    auth_attempts = 0
+    connect_failures = 0
+
+    while auth_attempts < MAX_LOGIN_ATTEMPTS:
         try:
             webui.connect(hostname, username, cfg.tenant.password)
             save_password(cfg.tenant.password, hostname, username)
             return True
         except Exception as exc:
+            if _is_connection_error(exc):
+                connect_failures += 1
+                if connect_failures >= MAX_CONNECT_RETRIES:
+                    log.error("Connection failed after %d attempts — aborting", MAX_CONNECT_RETRIES)
+                    print(
+                        f"\n  Connection to {hostname} failed after "
+                        f"{MAX_CONNECT_RETRIES} attempts. Check network/VPN."
+                    )
+                    return False
+                log.warning(
+                    "Connection error (%d/%d): %s — retrying in %ds",
+                    connect_failures, MAX_CONNECT_RETRIES,
+                    exc, CONNECT_RETRY_DELAY,
+                )
+                print(
+                    f"\n  Connection failed ({connect_failures}/{MAX_CONNECT_RETRIES})"
+                    f" — retrying in {CONNECT_RETRY_DELAY}s..."
+                )
+                time.sleep(CONNECT_RETRY_DELAY)
+                continue
+
             if "invalid username or password" not in str(exc).lower():
                 raise
-            remaining = MAX_LOGIN_ATTEMPTS - attempt
+            auth_attempts += 1
+            remaining = MAX_LOGIN_ATTEMPTS - auth_attempts
             if remaining == 0:
                 print(f"\n  Authentication failed after {MAX_LOGIN_ATTEMPTS} attempts.")
                 return False
@@ -336,7 +388,8 @@ def cmd_continue(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
+def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
+                log_dir: Path | None = None) -> int:
     """Run an upgrade scenario."""
     from util_input import start_input_monitor
 
@@ -365,6 +418,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         reboot_time=args.reboottime,
         reboot_delay=args.rebootdelay,
         stop_event=stop_event,
+        log_dir=log_dir,
     )
 
     # Execute scenario
@@ -391,7 +445,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
-def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
+def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace,
+                        log_dir: Path | None = None) -> int:
     """Verify auto-upgrade stays disabled (negative test)."""
     from util_input import start_input_monitor
 
@@ -413,6 +468,7 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         config_name=cfg.tenant.config_name,
         source_64_bit=args.source_64_bit,
         stop_event=stop_event,
+        log_dir=log_dir,
     )
 
     result = runner.run_upgrade_disabled(
@@ -529,10 +585,15 @@ def main() -> int:
                 f"Password for {cfg.tenant.username}@{cfg.tenant.hostname}"
             )
 
-    # Now start logging — upgrade commands use two-phase logging
-    # (console only here, file handler added later in the log folder)
-    needs_folder_logging = args.command in ("upgrade", "disable-upgrade")
-    setup_logging(verbose=args.verbose, file_logging=not needs_folder_logging)
+    # Start logging — upgrade commands get a folder immediately so
+    # early logs (WebUI connect, install, sync) are captured to file.
+    is_upgrade_cmd = args.command in ("upgrade", "disable-upgrade")
+    setup_logging(verbose=args.verbose, file_logging=not is_upgrade_cmd)
+    log_dir: Path | None = None
+    if is_upgrade_cmd:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_dir = LOG_DIR / f"upgrade_{timestamp}"
+        setup_folder_logging(log_dir)
 
     # Validate config
     errors = validate_config(cfg, require_tenant=require_tenant)
@@ -547,9 +608,9 @@ def main() -> int:
     elif args.command == "status":
         return cmd_status(cfg)
     elif args.command == "upgrade":
-        return cmd_upgrade(cfg, args)
+        return cmd_upgrade(cfg, args, log_dir=log_dir)
     elif args.command == "disable-upgrade":
-        return cmd_disable_upgrade(cfg, args)
+        return cmd_disable_upgrade(cfg, args, log_dir=log_dir)
     elif args.command == "continue":
         return cmd_continue(args)
     else:

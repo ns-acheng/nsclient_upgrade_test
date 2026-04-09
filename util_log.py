@@ -2,10 +2,9 @@
 Logging setup for the Netskope Client Upgrade Tool.
 Configures file + console handlers with configurable verbosity.
 
-Supports two-phase logging for upgrade scenarios:
-  1. ``setup_logging(file_logging=False)`` — console only (early startup)
-  2. ``setup_folder_logging(log_dir)`` — add file handler once the
-     scenario-specific log folder is known.
+For upgrade scenarios, file logging starts immediately in a
+timestamp-only folder.  Once the from/to versions are known the
+folder is renamed via ``rename_log_dir()`` to include version info.
 """
 
 import logging
@@ -153,3 +152,43 @@ def setup_folder_logging(
         "File logging started — log_dir=%s", log_dir,
     )
     return log_file
+
+
+def rename_log_dir(old_dir: Path, new_dir: Path) -> Path:
+    """
+    Rename a scenario log folder and update the file handler.
+
+    Closes any file handler pointing into *old_dir*, renames the
+    directory to *new_dir*, then re-attaches the handler at the new
+    location (append mode so nothing is lost).
+
+    :param old_dir: Current log folder path.
+    :param new_dir: Desired new log folder path.
+    :return: The new log folder path.
+    """
+    root_logger = logging.getLogger()
+
+    # Find file handlers inside old_dir, close them, remember filenames
+    log_filename: Optional[str] = None
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, logging.FileHandler):
+            handler_path = Path(handler.baseFilename)
+            if handler_path.parent == old_dir:
+                log_filename = handler_path.name
+                handler.close()
+                root_logger.removeHandler(handler)
+
+    old_dir.rename(new_dir)
+
+    # Re-attach file handler in the renamed directory
+    if log_filename:
+        log_file = new_dir / log_filename
+        file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+        root_logger.addHandler(file_handler)
+
+    logging.getLogger("nsclient_upgrade").info(
+        "Log folder renamed — %s", new_dir,
+    )
+    return new_dir

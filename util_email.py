@@ -251,10 +251,35 @@ class GmailBrowser:
         """
         Detach from Chrome without closing the user's browser.
 
-        Do NOT call driver.quit() — that would terminate the
-        user's entire Chrome session.
+        Kills any leftover chromedriver.exe processes spawned by
+        Selenium to prevent accumulation across runs.
         """
-        self._driver = None
+        if self._driver is not None:
+            pid = self._driver.service.process.pid if self._driver.service else None
+            self._driver = None
+            if pid:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True,
+                    )
+                    log.info("Killed chromedriver.exe (PID %d)", pid)
+                except Exception:
+                    pass
+            self._kill_stale_chromedrivers()
+
+    @staticmethod
+    def _kill_stale_chromedrivers() -> None:
+        """Kill any remaining chromedriver.exe processes."""
+        try:
+            result = subprocess.run(
+                ["taskkill", "/F", "/IM", "chromedriver.exe"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                log.info("Killed stale chromedriver.exe processes")
+        except Exception:
+            pass
 
     # -- helpers --------------------------------------------------------
 

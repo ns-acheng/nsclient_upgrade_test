@@ -239,14 +239,47 @@ class TestConnectWithRetry:
     def test_non_auth_error_propagates(
         self, mock_save: MagicMock, cfg: ToolConfig,
     ) -> None:
-        """Non-auth exceptions are raised, not retried."""
+        """Non-auth, non-connection exceptions are raised, not retried."""
         webui = MagicMock()
-        webui.connect.side_effect = ConnectionError("network down")
+        webui.connect.side_effect = ValueError("unexpected error")
 
-        with pytest.raises(ConnectionError, match="network down"):
+        with pytest.raises(ValueError, match="unexpected error"):
             connect_with_retry(webui, cfg)
         webui.connect.assert_called_once()
         mock_save.assert_not_called()
+
+    @patch("main.time.sleep")
+    @patch("main.save_password")
+    def test_connection_error_retries_then_aborts(
+        self, mock_save: MagicMock, mock_sleep: MagicMock,
+        cfg: ToolConfig,
+    ) -> None:
+        """Connection errors are retried up to MAX_CONNECT_RETRIES."""
+        webui = MagicMock()
+        webui.connect.side_effect = ConnectionError("network down")
+
+        result = connect_with_retry(webui, cfg)
+        assert result is False
+        assert webui.connect.call_count == 5
+        mock_save.assert_not_called()
+
+    @patch("main.time.sleep")
+    @patch("main.save_password")
+    def test_connection_error_recovers(
+        self, mock_save: MagicMock, mock_sleep: MagicMock,
+        cfg: ToolConfig,
+    ) -> None:
+        """Connection succeeds after transient failures."""
+        webui = MagicMock()
+        webui.connect.side_effect = [
+            ConnectionError("network down"),
+            ConnectionError("network down"),
+            None,
+        ]
+
+        result = connect_with_retry(webui, cfg)
+        assert result is True
+        assert webui.connect.call_count == 3
 
     @patch("main.save_password")
     @patch("main.clear_password")

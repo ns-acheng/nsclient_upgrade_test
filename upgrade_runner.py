@@ -19,7 +19,7 @@ from util_client import (
     ExeValidationResult, UninstallEntryResult,
 )
 from util_config import UpgradeConfig
-from util_log import LOG_DIR, build_log_dir_name, setup_folder_logging
+from util_log import LOG_DIR, build_log_dir_name, rename_log_dir, setup_folder_logging
 from util_webui import WebUIClient
 
 BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
@@ -79,6 +79,7 @@ class UpgradeRunner:
         reboot_time: Optional[int] = None,
         reboot_delay: int = 5,
         stop_event: Optional[threading.Event] = None,
+        log_dir: Optional[Path] = None,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -96,6 +97,7 @@ class UpgradeRunner:
         :param reboot_time: Timing number (1-11) that triggers a reboot.
         :param reboot_delay: Seconds before reboot after timing fires.
         :param stop_event: Threading event for graceful shutdown (ESC key).
+        :param log_dir: Pre-created log folder (from main.py).
         """
         self.webui = webui
         self.client = client
@@ -110,7 +112,7 @@ class UpgradeRunner:
         self.stop_event = stop_event or threading.Event()
         self._cloned_installer: Optional[Path] = None
         self._upgrade_enabled = False
-        self._log_dir: Optional[Path] = None
+        self._log_dir: Optional[Path] = log_dir
 
     # ── Upgrade Scenarios ────────────────────────────────────────────
 
@@ -1152,13 +1154,14 @@ class UpgradeRunner:
         self, from_version: str, to_version: str,
     ) -> Path:
         """
-        Create the scenario log folder and redirect file logging there.
+        Rename the pre-created log folder to include version info.
 
-        Called after version_before and expected version are known.
+        If no pre-created folder exists (e.g. tests), falls back to
+        creating a new folder.
 
         :param from_version: Installed (source) version string.
         :param to_version: Target upgrade version string.
-        :return: Path to the created log folder.
+        :return: Path to the log folder.
         """
         dir_name = build_log_dir_name(
             from_version=from_version,
@@ -1166,8 +1169,14 @@ class UpgradeRunner:
             target_64_bit=self.target_64_bit,
             reboot_time=self.reboot_time,
         )
-        self._log_dir = LOG_DIR / dir_name
-        setup_folder_logging(self._log_dir)
+        new_dir = LOG_DIR / dir_name
+
+        if self._log_dir and self._log_dir.exists():
+            self._log_dir = rename_log_dir(self._log_dir, new_dir)
+        else:
+            self._log_dir = new_dir
+            setup_folder_logging(self._log_dir)
+
         log.info("Log folder: %s", self._log_dir)
         return self._log_dir
 
