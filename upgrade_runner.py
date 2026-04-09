@@ -759,8 +759,8 @@ class UpgradeRunner:
             self.webui.send_email_invite(invite_email)
             invite_sent = True
 
-            log.info("Waiting 10s for invite email to arrive")
-            time.sleep(10)
+            log.info("Waiting 1s for invite email to arrive")
+            time.sleep(1)
 
             url = self._gmail_browser.get_download_link(
                 skip_count=old_count,
