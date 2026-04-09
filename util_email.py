@@ -655,6 +655,10 @@ class GmailBrowser:
         """
         Extract the download URL from the currently opened email body.
 
+        Waits for the email body container to load, then searches
+        for download links by text.  Also logs all ``<a>`` tags
+        in the body on first failure for debugging.
+
         :return: Unwrapped URL, or empty string if not found.
         """
         from selenium.common.exceptions import (
@@ -665,7 +669,7 @@ class GmailBrowser:
         for link_text in link_texts:
             xpath = f'//a[contains(text(), "{link_text}")]'
             try:
-                link_el = WebDriverWait(driver, 5).until(
+                link_el = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, xpath))
                 )
                 # Retry once on stale element (DOM may refresh after
@@ -688,6 +692,54 @@ class GmailBrowser:
             except TimeoutException:
                 log.info("Link text %r not found, trying next", link_text)
                 continue
+
+        # Dump email body HTML to file for debugging
+        try:
+            info = driver.execute_script("""
+                var body = document.querySelector(
+                    'div.a3s, div.ii.gt'
+                );
+                var html = '';
+                if (body) {
+                    html = body.innerHTML;
+                } else {
+                    var msg = document.querySelector(
+                        'div.adn, div[role="main"]'
+                    );
+                    html = msg
+                        ? '<!-- fallback -->' + msg.innerHTML
+                        : '<!-- no email body found -->';
+                }
+                // Try to grab the email subject line
+                var subj = '';
+                var h2 = document.querySelector(
+                    'h2.hP, span[data-thread-perm-id]'
+                );
+                if (h2) subj = h2.textContent.trim();
+                return {html: html, subject: subj};
+            """)
+            html = info.get("html", "") if info else ""
+            subject = info.get("subject", "") if info else ""
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            fname = f"email_debug_{stamp}.html"
+            dump_path = (
+                Path(__file__).parent / "log" / fname
+            )
+            dump_path.parent.mkdir(parents=True, exist_ok=True)
+            header = (
+                f"<!-- subject: {subject} -->\n"
+                f"<!-- timestamp: {stamp} -->\n"
+            )
+            dump_path.write_text(
+                header + html, encoding="utf-8",
+            )
+            log.info(
+                "Dumped email body to %s "
+                "(subject=%r, %d bytes)",
+                dump_path, subject, len(html),
+            )
+        except Exception as exc:
+            log.warning("Failed to dump email body: %s", exc)
         return ""
 
     def close(self) -> None:
