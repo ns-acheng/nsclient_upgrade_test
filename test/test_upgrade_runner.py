@@ -3,6 +3,7 @@ Unit tests for upgrade_runner.py.
 All I/O is mocked — no network, no local client, no tenant needed.
 """
 
+import itertools
 import json
 import sys
 from pathlib import Path
@@ -92,8 +93,8 @@ def no_local_installer(tmp_path: Path) -> Any:
     empty_dir = tmp_path / "empty_base_version"
     empty_dir.mkdir()
     fake_json = tmp_path / "no_installer.json"  # Does not exist
-    with patch("upgrade_runner.BASE_VERSION_DIR", empty_dir), \
-         patch("upgrade_runner.INSTALLER_JSON", fake_json):
+    with patch("util_installer.BASE_VERSION_DIR", empty_dir), \
+         patch("util_installer.INSTALLER_JSON", fake_json):
         yield
 
 
@@ -104,10 +105,14 @@ def no_real_io() -> Any:
     mock_monitor.wait_for_upgrade_complete.return_value = True
     mock_monitor.wait_for_completion.return_value = True
     with patch("upgrade_runner.LocalClient.check_crash_dumps", return_value=(False, 0)), \
+         patch("util_verify.LocalClient.check_crash_dumps", return_value=(False, 0)), \
          patch("upgrade_runner.LocalClient.collect_log_bundle", return_value=None), \
          patch("upgrade_runner.LocalClient.handle_crash", return_value=None), \
+         patch("util_verify.LocalClient.handle_crash", return_value=None), \
          patch("upgrade_runner.setup_folder_logging", return_value=Path("fake.log")), \
          patch("upgrade_runner.rename_log_dir", side_effect=lambda old, new: new), \
+         patch("util_installer.time.sleep", return_value=None), \
+         patch("util_verify.time.time", side_effect=itertools.count(0, 0.1)), \
          patch("util_monitor.TimingMonitor", return_value=mock_monitor):
         yield
 
@@ -544,7 +549,7 @@ class TestEnsureClientInstalled:
         # Place exact match file
         (tmp_path / "STAgent.msi").touch()
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.download_build.assert_not_called()
@@ -582,7 +587,7 @@ class TestEnsureClientInstalled:
             source_64_bit=True,
         )
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner_64.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.download_build.assert_not_called()
@@ -609,7 +614,7 @@ class TestEnsureClientInstalled:
         # Place a single file with a different name
         (tmp_path / "NSClient_old.msi").touch()
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         # Copy created the expected file
@@ -634,7 +639,7 @@ class TestEnsureClientInstalled:
         mock_client.get_version.return_value = "92.0.0.100"
         mock_webui.get_device_version.return_value = "92.0.0.100"
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.download_build.assert_called_once()
@@ -660,7 +665,7 @@ class TestEnsureClientInstalled:
         (tmp_path / "installer_a.msi").touch()
         (tmp_path / "installer_b.msi").touch()
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.download_build.assert_called_once()
@@ -696,8 +701,8 @@ class TestEnsureClientInstalled:
         download_link = f"https://download-test.example.com/dlr/win/{token}"
         expected_name = f"{prefix}_{token}_.msi"
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path), \
-             patch("upgrade_runner.INSTALLER_JSON", installer_json), \
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path), \
+             patch("util_installer.INSTALLER_JSON", installer_json), \
              patch("builtins.input", return_value=download_link), \
              patch("builtins.print"):
             runner.run_upgrade_disabled(
@@ -767,7 +772,7 @@ class TestEnsureClientInstalled:
                 "user@example.com",
             )
             mock_browser.get_download_link.assert_called_once_with(
-                skip_count=2,
+                skip_count=2, timeout=10,
             )
             mock_input.assert_not_called()
 
@@ -838,7 +843,7 @@ class TestMsiVersionCheck:
 
         (tmp_path / "STAgent.msi").write_bytes(b"fake")
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.install_msi.assert_not_called()
@@ -869,7 +874,7 @@ class TestMsiVersionCheck:
 
         (tmp_path / "STAgent.msi").write_bytes(b"fake")
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.uninstall_msi.assert_called_once_with("{GUID-123}")
@@ -900,7 +905,7 @@ class TestMsiVersionCheck:
 
         (tmp_path / "STAgent.msi").write_bytes(b"fake")
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.uninstall_msi.assert_called_once_with("{GUID-123}")
@@ -930,7 +935,7 @@ class TestMsiVersionCheck:
 
         (tmp_path / "STAgent.msi").write_bytes(b"fake")
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         mock_client.uninstall_msi.assert_not_called()
@@ -961,7 +966,7 @@ class TestMsiVersionCheck:
 
         (tmp_path / "STAgent.msi").write_bytes(b"fake")
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path):
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path):
             runner.run_upgrade_disabled(from_version="92.0.0")
 
         # Falls back to service running → skips install
@@ -993,7 +998,7 @@ class TestMsiVersionCheck:
 
         (tmp_path / "STAgent.msi").write_bytes(b"fake")
 
-        with patch("upgrade_runner.BASE_VERSION_DIR", tmp_path), \
+        with patch("util_installer.BASE_VERSION_DIR", tmp_path), \
              patch("builtins.input", return_value=""), \
              patch("builtins.print"):
             runner.run_upgrade_disabled(

@@ -401,6 +401,7 @@ class TimingMonitor:
         self,
         timeout: Optional[float] = None,
         settle_time: float = 15.0,
+        extend_timeout: float = 900.0,
     ) -> bool:
         """
         Block until the upgrade is functionally complete, then give
@@ -412,20 +413,43 @@ class TimingMonitor:
         and come back up, rather than accepting the still-running old
         service as "complete."
 
+        When timing 1 (monitor process starts) or timing 2
+        (nsInstallation.log updated) is detected, the deadline is
+        extended by *extend_timeout* seconds so the upgrade has enough
+        time to finish once it has actually started.
+
         :param timeout: Max seconds to wait for upgrade completion.
         :param settle_time: Extra seconds after upgrade is confirmed
                             to let the monitor capture late timings.
+        :param extend_timeout: Seconds to extend the deadline when
+                               timing 1 or 2 is first detected.
         :return: True if upgrade completed, False on timeout.
         """
         wait_time = timeout if timeout is not None else self._timeout
         deadline = time.time() + wait_time
         initial_pid = self._state.initial_svc_pid
         svc_went_down = False
+        deadline_extended = False
 
         while time.time() < deadline and not self._stop_event.is_set():
             if self._all_detected.is_set():
                 log.info("All timings already detected")
                 return True
+
+            # Extend deadline once when upgrade activity is detected
+            if not deadline_extended:
+                with self._lock:
+                    upgrade_started = (
+                        "1" in self._state.timings
+                        or "2" in self._state.timings
+                    )
+                if upgrade_started:
+                    deadline = time.time() + extend_timeout
+                    deadline_extended = True
+                    log.info(
+                        "Upgrade activity detected — extending "
+                        "deadline by %.0fs", extend_timeout,
+                    )
 
             svc_info = LocalClient.query_service("stAgentSvc")
             svc_running = (

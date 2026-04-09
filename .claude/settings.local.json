@@ -24,7 +24,8 @@
       "Bash(echo \"EXIT: $?\")",
       "Read(//c/dump/stAgentSvc.exe/**)",
       "Read(//c/ProgramData/netskope/stagent/logs/**)",
-      "Bash(echo \"EXIT_CODE=$?\")"
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(wc -l /c/git/nsclient_upgrade_test/*.py)"
     ]
   }
 }
