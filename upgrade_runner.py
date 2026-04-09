@@ -169,12 +169,23 @@ class UpgradeRunner:
                 is_64_bit=self.source_64_bit, wait_seconds=10,
             )
 
-            # Start timing monitor (background thread)
+            # Start timing monitor and wait for upgrade to complete
             monitor = self._start_monitor()
+            completed = monitor.wait_for_upgrade_complete(
+                timeout=self.cfg.max_wait_seconds,
+            )
 
-            # Poll for upgrade (also checks crash dumps & stop_event)
-            poll = self._wait_for_upgrade(expected_version=expected)
-            version_after = poll.final_version
+            # Check for crash dumps
+            crash_found, zero_count = LocalClient.check_crash_dumps()
+            if zero_count > 0:
+                log.info("Cleaned %d zero-byte dump files", zero_count)
+            if crash_found:
+                log.error("Crash dump detected during upgrade!")
+                effective_64 = self.target_64_bit or self.source_64_bit
+                log_dir = self._log_dir or LOG_DIR
+                LocalClient.handle_crash(effective_64, log_dir)
+
+            version_after = self._get_current_version()
 
             # Stop monitor and print timing report
             self._stop_monitor(monitor)
@@ -190,14 +201,14 @@ class UpgradeRunner:
             version_ok = version_after == expected
             success = (
                 version_ok and service_running
-                and validation_ok and not poll.crash_detected
+                and validation_ok and not crash_found
             )
             message = (
                 f"Upgrade successful: {version_before} -> {version_after}"
                 if version_ok
                 else f"Upgrade FAILED: expected {expected}, got {version_after}"
             )
-            if poll.crash_detected:
+            if crash_found:
                 message += " — CRASH DUMP DETECTED"
             message += self._format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
@@ -313,12 +324,23 @@ class UpgradeRunner:
                 is_64_bit=self.source_64_bit, wait_seconds=10,
             )
 
-            # Start timing monitor (background thread)
+            # Start timing monitor and wait for upgrade to complete
             monitor = self._start_monitor()
+            completed = monitor.wait_for_upgrade_complete(
+                timeout=self.cfg.max_wait_seconds,
+            )
 
-            # Poll for upgrade (also checks crash dumps & stop_event)
-            poll = self._wait_for_upgrade(expected_version=expected)
-            version_after = poll.final_version
+            # Check for crash dumps
+            crash_found, zero_count = LocalClient.check_crash_dumps()
+            if zero_count > 0:
+                log.info("Cleaned %d zero-byte dump files", zero_count)
+            if crash_found:
+                log.error("Crash dump detected during upgrade!")
+                effective_64 = self.target_64_bit or self.source_64_bit
+                log_dir = self._log_dir or LOG_DIR
+                LocalClient.handle_crash(effective_64, log_dir)
+
+            version_after = self._get_current_version()
 
             # Stop monitor and print timing report
             self._stop_monitor(monitor)
@@ -334,14 +356,14 @@ class UpgradeRunner:
             version_ok = version_after == expected
             success = (
                 version_ok and service_running
-                and validation_ok and not poll.crash_detected
+                and validation_ok and not crash_found
             )
             message = (
                 f"Golden upgrade successful: {version_before} -> {version_after}"
                 if version_ok
                 else f"Golden upgrade FAILED: expected {expected}, got {version_after}"
             )
-            if poll.crash_detected:
+            if crash_found:
                 message += " — CRASH DUMP DETECTED"
             message += self._format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
@@ -502,10 +524,8 @@ class UpgradeRunner:
 
     # ── Timing Monitor ───────────────────────────────────────────────
 
-    def _start_monitor(self) -> Optional[Any]:
-        """Start timing monitor if reboot_time is configured."""
-        if self.reboot_time is None:
-            return None
+    def _start_monitor(self) -> Any:
+        """Start timing monitor for upgrade lifecycle detection."""
         from util_monitor import TimingMonitor
 
         monitor = TimingMonitor(
@@ -515,6 +535,16 @@ class UpgradeRunner:
             log_dir=str(self._log_dir) if self._log_dir else "",
         )
         monitor.start()
+
+        # Bridge the runner's ESC stop_event to the monitor so
+        # pressing ESC stops the monitor promptly.
+        def _esc_bridge() -> None:
+            self.stop_event.wait()
+            monitor.stop()
+
+        bridge = threading.Thread(target=_esc_bridge, daemon=True)
+        bridge.start()
+
         return monitor
 
     def _stop_monitor(self, monitor: Optional[Any]) -> None:
@@ -625,15 +655,9 @@ class UpgradeRunner:
         # Step 4: Full install flow
         log.info("Installing base client")
 
-        # Send email invite before installation
-        if invite_email:
-            log.info("Sending email invite to %s", invite_email)
-            self.webui.send_email_invite(invite_email)
-
-        # Get download link from email invite
+        # Get download link from email invite (also sends the invite)
         installer_name = None
         if invite_email:
-            # Auto-extract from Gmail, fall back to manual paste
             download_link = self._fetch_download_link_from_gmail(
                 invite_email
             )
@@ -686,7 +710,7 @@ class UpgradeRunner:
             )
 
         # Install with msiexec
-        self.client.install_msi(str(installer))
+        self.client.install_msi(str(installer), log_dir=self._log_dir)
 
         # Wait for service to start
         if not self.client.wait_for_service():
@@ -698,11 +722,15 @@ class UpgradeRunner:
         self, invite_email: str,
     ) -> str:
         """
-        Try to auto-extract the download link from Gmail.
+        Send an email invite and auto-extract the download link from Gmail.
+
+        Flow: connect Chrome → count existing emails → send invite →
+        wait for delivery → search only new emails.
 
         Returns the URL on success, or an empty string on any failure
         (caller falls back to the manual input prompt).
         """
+        invite_sent = False
         try:
             from util_email import GmailBrowser
 
@@ -710,9 +738,23 @@ class UpgradeRunner:
                 email_address=invite_email,
                 is_64_bit=self.source_64_bit,
                 tenant_hostname=self.webui.hostname,
+                stop_event=self.stop_event,
             ) as browser:
                 browser.connect()
-                url = browser.get_download_link()
+                old_count = browser.count_matching_emails()
+                log.info(
+                    "Found %d existing email(s) — will skip these",
+                    old_count,
+                )
+
+                log.info("Sending email invite to %s", invite_email)
+                self.webui.send_email_invite(invite_email)
+                invite_sent = True
+
+                log.info("Waiting 10s for invite email to arrive")
+                time.sleep(10)
+
+                url = browser.get_download_link(skip_count=old_count)
                 log.info("Auto-extracted download link: %s", url)
                 return url
         except Exception:
@@ -721,6 +763,9 @@ class UpgradeRunner:
                 "manual input",
                 exc_info=True,
             )
+            if not invite_sent:
+                log.info("Sending email invite to %s", invite_email)
+                self.webui.send_email_invite(invite_email)
             return ""
 
     @staticmethod

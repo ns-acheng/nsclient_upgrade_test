@@ -13,6 +13,7 @@ can be imported without selenium installed (e.g. during testing).
 import logging
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -53,11 +54,13 @@ class GmailBrowser:
         is_64_bit: bool = True,
         debug_port: int = DEFAULT_DEBUG_PORT,
         tenant_hostname: str = "",
+        stop_event: Optional[threading.Event] = None,
     ) -> None:
         self._email_address = email_address
         self._is_64_bit = is_64_bit
         self._debug_port = debug_port
         self._tenant_hostname = tenant_hostname
+        self._stop_event = stop_event
         self._driver: Optional[Any] = None
 
     # -- context manager ------------------------------------------------
@@ -121,13 +124,79 @@ class GmailBrowser:
                 "Close all Chrome windows and retry."
             ) from exc
 
-    def get_download_link(self, timeout: int = DEFAULT_TIMEOUT) -> str:
+    def count_matching_emails(self) -> int:
+        """
+        Count how many emails currently match the invite subject.
+
+        Call this *before* sending the invite so
+        :meth:`get_download_link` can skip stale results.
+
+        :return: Number of matching email rows (0 if none).
+        :raises RuntimeError: If the browser is not connected.
+        """
+        if self._driver is None:
+            raise RuntimeError("Not connected — call connect() first")
+
+        from selenium.common.exceptions import TimeoutException
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.common.keys import Keys
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        driver = self._driver
+        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
+
+        if "mail.google.com" not in (driver.current_url or ""):
+            log.info("Navigating to Gmail")
+            driver.get(GMAIL_URL)
+
+        self._dismiss_overlays(driver, By)
+
+        try:
+            search_box = WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, 'input[aria-label="Search mail"]')
+                )
+            )
+        except TimeoutException:
+            search_box = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, 'input[name="q"]')
+                )
+            )
+
+        search_query = f'subject:("{subject}")'
+        log.info("Counting existing emails: %s", search_query)
+        search_box.clear()
+        search_box.send_keys(search_query)
+        search_box.send_keys(Keys.RETURN)
+
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "tr.zA"))
+            )
+            count: int = driver.execute_script(
+                "return document.querySelectorAll('tr.zA, tr.zE').length;"
+            )
+        except TimeoutException:
+            count = 0
+
+        log.info("Found %d existing email(s)", count)
+        return count
+
+    def get_download_link(
+        self,
+        timeout: int = DEFAULT_TIMEOUT,
+        skip_count: int = 0,
+    ) -> str:
         """
         Navigate Gmail, find the invite email, and return the download URL.
 
         Retries if the email has not arrived yet (up to *timeout* seconds).
 
         :param timeout: Max seconds to wait for the email to appear.
+        :param skip_count: Number of old emails to ignore (newest-first).
+            Pass the value returned by :meth:`count_matching_emails`.
         :return: Download URL string.
         :raises TimeoutError: If the email or link is not found in time.
         :raises RuntimeError: If the browser is not connected.
@@ -150,6 +219,9 @@ class GmailBrowser:
         link_texts = LINK_TEXTS_64 if self._is_64_bit else LINK_TEXTS_32
 
         while True:
+            if self._stop_event and self._stop_event.is_set():
+                raise TimeoutError("Stopped by user (ESC)")
+
             # Step 1: Navigate to Gmail
             if "mail.google.com" not in (driver.current_url or ""):
                 log.info("Navigating to Gmail")
@@ -189,9 +261,9 @@ class GmailBrowser:
                         (By.CSS_SELECTOR, "tr.zA")
                     )
                 )
-                row_count: int = driver.execute_script(
+                row_count = int(driver.execute_script(
                     "return document.querySelectorAll('tr.zA, tr.zE').length;"
-                )
+                ))
             except TimeoutException:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
@@ -204,20 +276,42 @@ class GmailBrowser:
                 time.sleep(SEARCH_RETRY_INTERVAL)
                 continue
 
-            # Step 5: Iterate rows, open each, check download link
-            for row_idx in range(row_count):
-                # Click the row by index
+            # Gmail shows newest first — only check new rows
+            new_count = row_count - skip_count
+            if new_count <= 0:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"No new email arrived within {timeout}s: {subject}"
+                    )
+                log.info(
+                    "No new email yet (%d old) — retrying in %ds",
+                    skip_count, SEARCH_RETRY_INTERVAL,
+                )
+                time.sleep(SEARCH_RETRY_INTERVAL)
+                continue
+
+            # Step 5: Iterate only new rows (indices 0..new_count-1)
+            log.info(
+                "%d new email(s) found (%d total, %d skipped)",
+                new_count, row_count, skip_count,
+            )
+            for row_idx in range(new_count):
+                # Click the row by index (no offsetParent guard —
+                # Gmail rows can report null offsetParent while visible)
                 clicked = driver.execute_script(f"""
                     var rows = document.querySelectorAll('tr.zA, tr.zE');
-                    if ({row_idx} < rows.length && rows[{row_idx}].offsetParent !== null) {{
+                    if ({row_idx} < rows.length) {{
                         rows[{row_idx}].click();
                         return true;
                     }}
                     return false;
                 """)
                 if not clicked:
+                    log.info(
+                        "Row %d not present in DOM — skipping", row_idx,
+                    )
                     continue
-                log.info("Opened email row %d/%d", row_idx + 1, row_count)
+                log.info("Opened email row %d/%d", row_idx + 1, new_count)
 
                 # Find download link in email body
                 url = self._extract_link_from_body(
@@ -232,8 +326,9 @@ class GmailBrowser:
                 # Check tenant hostname in the link
                 if self._tenant_hostname and self._tenant_hostname not in url:
                     log.info(
-                        "Link tenant mismatch (expected %s) — skipping row %d",
-                        self._tenant_hostname, row_idx + 1,
+                        "Link tenant mismatch (expected %s, got %s) "
+                        "— skipping row %d",
+                        self._tenant_hostname, url, row_idx + 1,
                     )
                     driver.back()
                     time.sleep(1)
@@ -241,8 +336,6 @@ class GmailBrowser:
 
                 log.info("Found download link: %s", url)
                 return url
-
-                # Go back to search results for next row
 
             # No matching row found in this pass
             if time.monotonic() >= deadline:

@@ -100,10 +100,15 @@ def no_local_installer(tmp_path: Path) -> Any:
 @pytest.fixture(autouse=True)
 def no_real_io() -> Any:
     """Mock static methods and functions that hit real filesystem/subprocesses."""
+    mock_monitor = MagicMock()
+    mock_monitor.wait_for_upgrade_complete.return_value = True
+    mock_monitor.wait_for_completion.return_value = True
     with patch("upgrade_runner.LocalClient.check_crash_dumps", return_value=(False, 0)), \
          patch("upgrade_runner.LocalClient.collect_log_bundle", return_value=None), \
          patch("upgrade_runner.LocalClient.handle_crash", return_value=None), \
-         patch("upgrade_runner.setup_folder_logging", return_value=Path("fake.log")):
+         patch("upgrade_runner.setup_folder_logging", return_value=Path("fake.log")), \
+         patch("upgrade_runner.rename_log_dir", side_effect=lambda old, new: new), \
+         patch("util_monitor.TimingMonitor", return_value=mock_monitor):
         yield
 
 
@@ -125,26 +130,19 @@ def runner(mock_webui: MagicMock, mock_client: MagicMock, fast_cfg: UpgradeConfi
 class TestUpgradeToLatest:
     """Tests for run_upgrade_to_latest scenario."""
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_upgrade_success(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Client upgrades to latest version successfully."""
-        # Simulate time progression: start=0, then each time() call increments
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
         mock_client.is_service_running.side_effect = [False, True]
 
-        # First call returns old version (version_before), then poll reads
+        # version_before, then version_after (post-monitor)
         mock_client.get_version.side_effect = [
-            "92.0.0.100",  # version_before (Phase 2 init)
-            "92.0.0.100",  # Poll: initial read
-            "95.1.0.900",  # Poll: upgraded!
+            "92.0.0.100",  # version_before
+            "95.1.0.900",  # version_after (monitor detected upgrade)
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
@@ -153,23 +151,16 @@ class TestUpgradeToLatest:
         assert result.success is True
         assert result.version_after == "95.1.0.900"
         assert result.scenario == "upgrade_to_latest"
-        mock_webui.disable_auto_upgrade.assert_called()  # Cleanup
+        mock_webui.disable_auto_upgrade.assert_called()
         mock_webui.enable_upgrade_latest.assert_called_once()
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_upgrade_timeout(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
     ) -> None:
         """Client fails to upgrade within timeout."""
-        # Time always exceeds timeout
-        mock_time.side_effect = [0, 0.1, 100, 100, 100]
-
-        # Version never changes
+        # Version never changes — monitor returns but version still old
         mock_client.get_version.return_value = "92.0.0.100"
 
         result = runner.run_upgrade_to_latest(from_version="92.0.0")
@@ -177,20 +168,15 @@ class TestUpgradeToLatest:
         assert result.success is False
         assert "FAILED" in result.message
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_cleanup_on_success(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Cleanup (disable_auto_upgrade) runs after successful upgrade."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
-        mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
+        mock_client.get_version.side_effect = ["92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
         runner.run_upgrade_to_latest(from_version="92.0.0")
@@ -198,18 +184,13 @@ class TestUpgradeToLatest:
         # disable_auto_upgrade called at least twice: once in _prepare, once in _cleanup
         assert mock_webui.disable_auto_upgrade.call_count >= 2
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_cleanup_skips_rollback_when_upgrade_never_enabled(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Cleanup skips disable_auto_upgrade when install fails before upgrade is enabled."""
-        mock_time.side_effect = [0, 0.5]
         mock_client.download_build.side_effect = Exception("Network error")
 
         result = runner.run_upgrade_to_latest(from_version="92.0.0")
@@ -226,25 +207,19 @@ class TestUpgradeToLatest:
 class TestUpgradeToGolden:
     """Tests for run_upgrade_to_golden scenario."""
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_golden_latest_no_dot(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Upgrade to latest golden (index=-1) without dot release."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         mock_client.is_service_running.side_effect = [False, True]
 
         # Expected: base of golden 90.0.0 -> sorted[0] = "90.0.0.100"
         mock_client.get_version.side_effect = [
-            "84.0.0.100",  # After install
-            "84.0.0.100",  # Poll initial
-            "90.0.0.100",  # Poll: upgraded
+            "84.0.0.100",  # version_before
+            "90.0.0.100",  # version_after
         ]
         mock_webui.get_device_version.return_value = "90.0.0.100"
 
@@ -256,25 +231,19 @@ class TestUpgradeToGolden:
             "90.0.0", dot=False, search_config="",
         )
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_golden_latest_with_dot(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Upgrade to latest golden with dot release enabled."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         mock_client.is_service_running.side_effect = [False, True]
 
         # Expected: highest dot of 90.0.0 -> sorted[-1] = "90.1.0.300"
         mock_client.get_version.side_effect = [
-            "84.0.0.100",
-            "84.0.0.100",
-            "90.1.0.300",
+            "84.0.0.100",  # version_before
+            "90.1.0.300",  # version_after
         ]
         mock_webui.get_device_version.return_value = "90.1.0.300"
 
@@ -286,20 +255,15 @@ class TestUpgradeToGolden:
             "90.0.0", dot=True, search_config="",
         )
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_auto_picks_from_version(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """When from_version is None, auto-picks an older version."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         mock_client.is_service_running.side_effect = [False, True]
-        mock_client.get_version.side_effect = ["87.0.0.100", "87.0.0.100", "90.0.0.100"]
+        mock_client.get_version.side_effect = ["87.0.0.100", "90.0.0.100"]
         mock_webui.get_device_version.return_value = "90.0.0.100"
 
         result = runner.run_upgrade_to_golden(from_version=None, dot=False)
@@ -310,19 +274,13 @@ class TestUpgradeToGolden:
         dl_args = mock_client.download_build.call_args
         assert "release-87.0.0" == dl_args.kwargs.get("build_version", dl_args[1].get("build_version", ""))
 
-
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_golden_dot_picks_highest_version_numerically(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         mock_client: MagicMock,
         mock_webui: MagicMock,
         fast_cfg: UpgradeConfig,
     ) -> None:
         """golden-dot picks 135.1.10.2611 over 135.1.7.2602 (numeric sort)."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         mock_client.is_service_running.side_effect = [False, True]
 
         # Versions that sort differently lexicographically vs numerically
@@ -339,9 +297,8 @@ class TestUpgradeToGolden:
 
         # Expected: 135.1.10.2611 (highest numerically, NOT 135.1.7.2602)
         mock_client.get_version.side_effect = [
-            "132.0.0.100",
-            "132.0.0.100",
-            "135.1.10.2611",
+            "132.0.0.100",  # version_before
+            "135.1.10.2611",  # version_after
         ]
         mock_webui.get_device_version.return_value = "135.1.10.2611"
 
@@ -419,20 +376,15 @@ class TestUpgradeDisabled:
 class TestWebUIVerification:
     """Tests for WebUI version verification behavior."""
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_webui_mismatch_logged(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """WebUI version mismatch is captured in result but doesn't fail the test."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
-        mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
+        mock_client.get_version.side_effect = ["92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.return_value = "92.0.0.100"  # Stale!
 
         result = runner.run_upgrade_to_latest(from_version="92.0.0")
@@ -442,20 +394,15 @@ class TestWebUIVerification:
         # But WebUI reported stale version
         assert result.webui_version == "92.0.0.100"
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_webui_error_handled(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """WebUI query failure doesn't crash the scenario."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
-        mock_client.get_version.side_effect = ["92.0.0.100", "92.0.0.100", "95.1.0.900"]
+        mock_client.get_version.side_effect = ["92.0.0.100", "95.1.0.900"]
         mock_webui.get_device_version.side_effect = Exception("Connection lost")
 
         result = runner.run_upgrade_to_latest(from_version="92.0.0")
@@ -600,7 +547,7 @@ class TestEnsureClientInstalled:
 
         mock_client.download_build.assert_not_called()
         mock_client.install_msi.assert_called_once_with(
-            str(tmp_path / "STAgent.msi"),
+            str(tmp_path / "STAgent.msi"), log_dir=None,
         )
 
     @patch("upgrade_runner.time.sleep", return_value=None)
@@ -638,7 +585,7 @@ class TestEnsureClientInstalled:
 
         mock_client.download_build.assert_not_called()
         mock_client.install_msi.assert_called_once_with(
-            str(tmp_path / "STAgent64.msi"),
+            str(tmp_path / "STAgent64.msi"), log_dir=None,
         )
 
     @patch("upgrade_runner.time.sleep", return_value=None)
@@ -761,7 +708,7 @@ class TestEnsureClientInstalled:
         assert not (tmp_path / expected_name).exists()
         # msiexec was called with the tenant-specific name
         mock_client.install_msi.assert_called_once_with(
-            str(tmp_path / expected_name),
+            str(tmp_path / expected_name), log_dir=None,
         )
 
     @patch("upgrade_runner.time.sleep", return_value=None)
@@ -798,6 +745,7 @@ class TestEnsureClientInstalled:
         mock_webui.get_device_version.return_value = "92.0.0.100"
 
         mock_browser = MagicMock()
+        mock_browser.count_matching_emails.return_value = 2
         mock_browser.get_download_link.return_value = (
             "https://download.example.com/dlr/win/TOKEN"
         )
@@ -812,7 +760,13 @@ class TestEnsureClientInstalled:
                 invite_email="user@example.com",
             )
             mock_browser.connect.assert_called_once()
-            mock_browser.get_download_link.assert_called_once()
+            mock_browser.count_matching_emails.assert_called_once()
+            mock_webui.send_email_invite.assert_called_once_with(
+                "user@example.com",
+            )
+            mock_browser.get_download_link.assert_called_once_with(
+                skip_count=2,
+            )
             mock_input.assert_not_called()
 
     @patch("upgrade_runner.time.sleep", return_value=None)
@@ -842,6 +796,10 @@ class TestEnsureClientInstalled:
             runner.run_upgrade_disabled(
                 from_version="92.0.0",
                 invite_email="user@example.com",
+            )
+            # Invite sent in fallback since Chrome failed before send
+            mock_webui.send_email_invite.assert_called_once_with(
+                "user@example.com",
             )
             # Falls back to manual input prompt
             mock_input.assert_called_once()
@@ -1121,21 +1079,17 @@ class TestInitNsclient:
 class TestPostUpgradeServiceCheck:
     """Tests for post-upgrade service verification."""
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_service_checked_after_upgrade(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Service running check happens after upgrade completes."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = [
-            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+            "92.0.0.100",  # version_before
+            "95.1.0.900",  # version_after
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
@@ -1145,21 +1099,17 @@ class TestPostUpgradeServiceCheck:
         # once in _ensure_client_installed, once in _verify_service_running
         assert mock_client.is_service_running.call_count >= 2
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_service_down_after_upgrade_fails_validation(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Service down after upgrade fails pre-report validation."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.return_value = False
         mock_client.get_version.side_effect = [
-            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+            "92.0.0.100",  # version_before
+            "95.1.0.900",  # version_after
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
@@ -1177,21 +1127,17 @@ class TestPostUpgradeServiceCheck:
 class TestPreReportValidation:
     """Tests for exe/registry/service validation in upgrade scenarios."""
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_exe_missing_fails_upgrade(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Upgrade fails when a required executable is missing."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = [
-            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+            "92.0.0.100",  # version_before
+            "95.1.0.900",  # version_after
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
         mock_client.verify_executables.return_value = ExeValidationResult(
@@ -1209,21 +1155,17 @@ class TestPreReportValidation:
         assert "stAgentUI.exe" in result.exe_validation.missing
         assert "missing exe" in result.message
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_exe_version_mismatch_fails_upgrade(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Upgrade fails when executable has wrong version."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = [
-            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+            "92.0.0.100",  # version_before
+            "95.1.0.900",  # version_after
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
         mock_client.verify_executables.return_value = ExeValidationResult(
@@ -1239,21 +1181,17 @@ class TestPreReportValidation:
         assert result.success is False
         assert "exe version mismatch" in result.message
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_uninstall_entry_missing_fails_upgrade(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Upgrade fails when uninstall registry entry is missing."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = [
-            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+            "92.0.0.100",  # version_before
+            "95.1.0.900",  # version_after
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
         mock_client.check_uninstall_registry.return_value = UninstallEntryResult(
@@ -1267,21 +1205,17 @@ class TestPreReportValidation:
         assert result.uninstall_entry.found is False
         assert "uninstall registry entry missing" in result.message
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_all_validation_passes(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Upgrade succeeds when all validation items pass."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
         mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = [
-            "92.0.0.100", "92.0.0.100", "95.1.0.900",
+            "92.0.0.100",  # version_before
+            "95.1.0.900",  # version_after
         ]
         mock_webui.get_device_version.return_value = "95.1.0.900"
 
@@ -1294,21 +1228,17 @@ class TestPreReportValidation:
         assert result.uninstall_entry is not None
         assert result.uninstall_entry.found is True
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_golden_validation_fails_on_missing_exe(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Golden upgrade also fails when exe validation fails."""
-        mock_time.side_effect = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.side_effect = [
-            "84.0.0.100", "84.0.0.100", "90.0.0.100",
+            "84.0.0.100",  # version_before
+            "90.0.0.100",  # version_after
         ]
         mock_webui.get_device_version.return_value = "90.0.0.100"
         mock_client.verify_executables.return_value = ExeValidationResult(
@@ -1324,18 +1254,13 @@ class TestPreReportValidation:
         assert result.success is False
         assert "missing exe" in result.message
 
-    @patch("upgrade_runner.time.sleep", return_value=None)
-    @patch("upgrade_runner.time.time")
     def test_disabled_validation_fails_on_missing_uninstall(
         self,
-        mock_time: MagicMock,
-        mock_sleep: MagicMock,
         runner: UpgradeRunner,
         mock_client: MagicMock,
         mock_webui: MagicMock,
     ) -> None:
         """Disabled upgrade also fails when uninstall entry is missing."""
-        mock_time.side_effect = [0, 0.1, 100, 100, 100]
         mock_client.is_service_running.side_effect = [False, True]
         mock_client.get_version.return_value = "92.0.0.100"
         mock_webui.get_device_version.return_value = "92.0.0.100"
@@ -1396,13 +1321,18 @@ class TestTimingMonitorIntegration:
         mock_monitor_instance.stop.assert_called_once()
         mock_monitor_instance.print_report.assert_called_once()
 
-    def test_monitor_not_started_when_reboot_time_none(
+    @patch("util_monitor.TimingMonitor")
+    def test_monitor_started_when_reboot_time_none(
         self,
+        MockMonitor: MagicMock,
         mock_webui: MagicMock,
         mock_client: MagicMock,
         fast_cfg: UpgradeConfig,
     ) -> None:
-        """No monitor when reboot_time is None (default)."""
+        """Monitor is still started when reboot_time is None (default)."""
+        mock_monitor_instance = MagicMock()
+        MockMonitor.return_value = mock_monitor_instance
+
         mock_client.get_version.return_value = "95.1.0.900"
         mock_client.is_service_running.return_value = True
         mock_client.get_msi_subject.return_value = "92.0.0.100"
@@ -1418,7 +1348,10 @@ class TestTimingMonitorIntegration:
             host_name="test-host",
             email="test@gmail.com",
         )
+        runner.run_upgrade_to_latest()
 
-        with patch("util_monitor.TimingMonitor") as MockMonitor:
-            runner.run_upgrade_to_latest()
-            MockMonitor.assert_not_called()
+        MockMonitor.assert_called_once()
+        call_kwargs = MockMonitor.call_args[1]
+        assert call_kwargs["reboot_time"] is None
+        mock_monitor_instance.start.assert_called_once()
+        mock_monitor_instance.stop.assert_called_once()

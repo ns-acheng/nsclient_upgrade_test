@@ -277,11 +277,12 @@ class LocalClient:
         self._client.install(setup_file_path=setup_file_path)
         log.info("Client installation completed")
 
-    def install_msi(self, setup_file_path: str) -> None:
+    def install_msi(self, setup_file_path: str, log_dir: Optional[Path] = None) -> None:
         """
         Install the client using msiexec silent install (Windows).
 
         :param setup_file_path: Full path to the MSI installer.
+        :param log_dir: Directory for the msiexec verbose log. Falls back to the MSI's parent.
         :raises RuntimeError: If not running as admin or msiexec fails.
         """
         if not self._is_admin():
@@ -290,7 +291,8 @@ class LocalClient:
                 "Re-run the script as Administrator."
             )
 
-        msi_log = Path(setup_file_path).parent / "msiexec.log"
+        log_parent = log_dir if log_dir else Path(setup_file_path).parent
+        msi_log = Path(log_parent) / "msiexec.log"
         log.info("Installing via msiexec: %s", setup_file_path)
         result = subprocess.run(
             ["msiexec", "/i", setup_file_path, "/qn", "/l*v", str(msi_log)],
