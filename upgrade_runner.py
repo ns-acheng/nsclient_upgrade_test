@@ -136,12 +136,6 @@ class UpgradeRunner:
         log.info("  config_name: %s", self.config_name or "(default)")
         log.info("  from_version: %s", from_version)
         log.info("=" * 70)
-        if not self.config_name:
-            log.warning(
-                "config_name is empty — API calls will target the default "
-                "tenant config. Set config_name via nsconfig.json or --config."
-            )
-
         try:
             # Phase 1: Ensure base client is installed (no nsclient needed)
             self._ensure_client_installed(from_version, invite_email)
@@ -266,12 +260,6 @@ class UpgradeRunner:
         log.info("  config_name: %s", self.config_name or "(default)")
         log.info("  dot: %s, from_version: %s", dot, from_version)
         log.info("=" * 70)
-        if not self.config_name:
-            log.warning(
-                "config_name is empty — API calls will target the default "
-                "tenant config. Set config_name via nsconfig.json or --config."
-            )
-
         try:
             # Resolve latest golden version for auto-pick before install
             all_versions = self.webui.get_release_versions()
@@ -415,12 +403,6 @@ class UpgradeRunner:
         log.info("  config_name: %s", self.config_name or "(default)")
         log.info("  from_version: %s", from_version)
         log.info("=" * 70)
-        if not self.config_name:
-            log.warning(
-                "config_name is empty — API calls will target the default "
-                "tenant config. Set config_name via nsconfig.json or --config."
-            )
-
         try:
             # Phase 1: Ensure base client is installed (no nsclient needed)
             self._ensure_client_installed(from_version, invite_email)
