@@ -251,7 +251,14 @@ class InstallerManager:
         self._gmail_browser.connect()
 
         # Phase 1: Clear old unread emails and capture baseline
-        self._gmail_browser.mark_all_as_read()
+        try:
+            self._gmail_browser.mark_all_as_read()
+        except Exception:
+            log.warning(
+                "mark_all_as_read failed — continuing with "
+                "baseline count",
+                exc_info=True,
+            )
         baseline = self._gmail_browser.count_unread_emails()
 
         log.info("Sending email invite to %s", invite_email)

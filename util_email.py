@@ -263,11 +263,11 @@ class GmailBrowser:
         timeout: int = DEFAULT_TIMEOUT,
     ) -> bool:
         """
-        Poll Gmail until the unread count exceeds *baseline*.
+        Poll Gmail inbox DOM until unread count exceeds *baseline*.
 
-        Lightweight — only searches and counts DOM rows, never opens
-        any email.  Call with *baseline* captured **before** sending
-        the invite so that the new email is detected reliably.
+        Scans inbox rows directly (``tr.zE`` = unread) with a
+        subject-text check instead of using Gmail search, which
+        can lag behind the actual inbox by 30+ seconds.
 
         :param baseline: Unread count before the invite was sent.
         :param timeout: Max seconds to poll.
@@ -278,19 +278,14 @@ class GmailBrowser:
 
         from selenium.common.exceptions import TimeoutException
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._driver
         deadline = time.monotonic() + timeout
-        search_query = (
-            f'is:unread subject:("{SEARCH_SUBJECT}") '
-            f'"{self._email_address}"'
-        )
 
         log.info(
-            "Polling for new unread email "
+            "Polling inbox DOM for new unread email "
             "(baseline=%d, timeout=%ds)",
             baseline, timeout,
         )
@@ -300,46 +295,45 @@ class GmailBrowser:
                 log.warning("Stop event — aborting email wait")
                 return False
 
-            # Always navigate to Gmail to force a fresh search.
-            # Without this, the page may stay on Inbox or show
-            # stale cached search results.
+            # Navigate to inbox to get fresh DOM
             driver.get(GMAIL_URL)
             self._dismiss_overlays(driver, By)
 
+            # Wait for inbox rows to load
             try:
-                search_box = WebDriverWait(driver, 15).until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR,
-                         'input[aria-label="Search mail"]')
-                    )
-                )
-            except TimeoutException:
-                search_box = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR, 'input[name="q"]')
-                    )
-                )
-
-            search_box.clear()
-            search_box.send_keys(search_query)
-            search_box.send_keys(Keys.RETURN)
-
-            try:
-                WebDriverWait(driver, 10).until(
+                WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, "tr.zA")
+                        (By.CSS_SELECTOR, "tr.zA, tr.zE")
                     )
                 )
-                count = int(driver.execute_script(
-                    "return document.querySelectorAll("
-                    "'tr.zA, tr.zE').length;"
-                ))
             except TimeoutException:
-                count = 0
+                remaining = deadline - time.monotonic()
+                log.info(
+                    "No inbox rows loaded "
+                    "— polling in %ds (%.0fs left)",
+                    SEARCH_RETRY_INTERVAL, remaining,
+                )
+                time.sleep(SEARCH_RETRY_INTERVAL)
+                continue
+
+            # Count unread rows (tr.zE) whose text contains
+            # the invite subject fragment
+            count = int(driver.execute_script(
+                "var rows = document.querySelectorAll('tr.zE');"
+                "var frag = arguments[0].toLowerCase();"
+                "var c = 0;"
+                "for (var i = 0; i < rows.length; i++) {"
+                "  if ((rows[i].textContent || '')"
+                "      .toLowerCase().indexOf(frag) !== -1) c++;"
+                "}"
+                "return c;",
+                SEARCH_SUBJECT,
+            ) or 0)
 
             if count > baseline:
                 log.info(
-                    "New unread email detected (%d > %d)",
+                    "New unread email detected in inbox "
+                    "(%d > %d)",
                     count, baseline,
                 )
                 return True
@@ -361,7 +355,10 @@ class GmailBrowser:
 
     def count_unread_emails(self) -> int:
         """
-        Count unread emails matching the invite subject.
+        Count unread inbox rows matching the invite subject.
+
+        Scans the inbox DOM directly (``tr.zE`` with subject text)
+        instead of using Gmail search to avoid index lag.
 
         :return: Number of matching unread rows (0 if none).
         :raises RuntimeError: If the browser is not connected.
@@ -371,7 +368,6 @@ class GmailBrowser:
 
         from selenium.common.exceptions import TimeoutException
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
 
@@ -383,42 +379,28 @@ class GmailBrowser:
         self._dismiss_overlays(driver, By)
 
         try:
-            search_box = WebDriverWait(driver, 30).until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR,
-                     'input[aria-label="Search mail"]')
-                )
-            )
-        except TimeoutException:
-            search_box = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, 'input[name="q"]')
-                )
-            )
-
-        search_query = (
-            f'is:unread subject:("{SEARCH_SUBJECT}") '
-            f'"{self._email_address}"'
-        )
-        log.info("Counting unread emails: %s", search_query)
-        search_box.clear()
-        search_box.send_keys(search_query)
-        search_box.send_keys(Keys.RETURN)
-
-        try:
             WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "tr.zA")
+                    (By.CSS_SELECTOR, "tr.zA, tr.zE")
                 )
             )
-            count: int = driver.execute_script(
-                "return document.querySelectorAll("
-                "'tr.zA, tr.zE').length;"
-            )
         except TimeoutException:
-            count = 0
+            log.info("No inbox rows found")
+            return 0
 
-        log.info("Found %d unread email(s)", count)
+        count: int = int(driver.execute_script(
+            "var rows = document.querySelectorAll('tr.zE');"
+            "var frag = arguments[0].toLowerCase();"
+            "var c = 0;"
+            "for (var i = 0; i < rows.length; i++) {"
+            "  if ((rows[i].textContent || '')"
+            "      .toLowerCase().indexOf(frag) !== -1) c++;"
+            "}"
+            "return c;",
+            SEARCH_SUBJECT,
+        ) or 0)
+
+        log.info("Found %d unread email(s) in inbox", count)
         return count
 
     def count_matching_emails(self) -> int:
