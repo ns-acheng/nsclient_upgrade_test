@@ -70,7 +70,12 @@ def load_config(
     if path.exists():
         log.info("Loading config from %s", path)
         with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+            try:
+                raw = json.load(f)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(
+                    f"Invalid JSON in {path}: {exc}"
+                ) from exc
     else:
         log.warning("Config file not found at %s — using defaults", path)
         raw = {}
