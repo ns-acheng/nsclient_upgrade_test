@@ -709,6 +709,11 @@ class UpgradeRunner:
                 "--from-version not provided"
             )
 
+        # Wait for the tenant to register the token before installing
+        if installer_name:
+            log.info("Waiting 15s for tenant to accept the token")
+            time.sleep(15)
+
         # Install with msiexec
         self.client.install_msi(str(installer), log_dir=self._log_dir)
 

@@ -154,13 +154,13 @@ class GmailBrowser:
 
         try:
             search_box = WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located(
+                EC.element_to_be_clickable(
                     (By.CSS_SELECTOR, 'input[aria-label="Search mail"]')
                 )
             )
         except TimeoutException:
             search_box = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located(
+                EC.element_to_be_clickable(
                     (By.CSS_SELECTOR, 'input[name="q"]')
                 )
             )
@@ -234,7 +234,7 @@ class GmailBrowser:
             log.info("Waiting for Gmail search input")
             try:
                 search_box = WebDriverWait(driver, 30).until(
-                    EC.presence_of_element_located(
+                    EC.element_to_be_clickable(
                         (By.CSS_SELECTOR,
                          'input[aria-label="Search mail"]')
                     )
@@ -242,7 +242,7 @@ class GmailBrowser:
             except TimeoutException:
                 # Fallback selector
                 search_box = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located(
+                    EC.element_to_be_clickable(
                         (By.CSS_SELECTOR, 'input[name="q"]')
                     )
                 )
@@ -377,35 +377,37 @@ class GmailBrowser:
         """
         Detach from Chrome without closing the user's browser.
 
-        Kills any leftover chromedriver.exe processes spawned by
-        Selenium to prevent accumulation across runs.
+        Uses ``quit()`` to cleanly end the WebDriver session.
+        Falls back to ``taskkill`` only if ``quit()`` fails.
         """
-        if self._driver is not None:
-            pid = self._driver.service.process.pid if self._driver.service else None
-            self._driver = None
+        if self._driver is None:
+            return
+        driver = self._driver
+        self._driver = None
+        try:
+            driver.quit()
+            log.info("WebDriver session closed via quit()")
+        except Exception:
+            # quit() failed — force-kill the chromedriver process
+            pid = None
+            try:
+                if driver.service and driver.service.process:
+                    pid = driver.service.process.pid
+            except Exception:
+                pass
             if pid:
                 try:
                     subprocess.run(
                         ["taskkill", "/F", "/PID", str(pid)],
                         capture_output=True,
                     )
-                    log.info("Killed chromedriver.exe (PID %d)", pid)
+                    log.info(
+                        "quit() failed — killed chromedriver.exe "
+                        "(PID %d)",
+                        pid,
+                    )
                 except Exception:
                     pass
-            self._kill_stale_chromedrivers()
-
-    @staticmethod
-    def _kill_stale_chromedrivers() -> None:
-        """Kill any remaining chromedriver.exe processes."""
-        try:
-            result = subprocess.run(
-                ["taskkill", "/F", "/IM", "chromedriver.exe"],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                log.info("Killed stale chromedriver.exe processes")
-        except Exception:
-            pass
 
     # -- helpers --------------------------------------------------------
 

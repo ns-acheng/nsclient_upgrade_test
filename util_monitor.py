@@ -406,10 +406,11 @@ class TimingMonitor:
         Block until the upgrade is functionally complete, then give
         the monitor extra time to capture remaining timing events.
 
-        Unlike ``wait_for_completion`` (which waits for all 11 timing
-        events), this checks the actual upgrade outcome — service
-        running, process alive, exe present in target install dir —
-        and returns early once those conditions are met.
+        The upgrade lifecycle is: old service stops → files replaced →
+        new service starts with a different PID.  This method waits
+        until the service has **cycled** (gone down or changed PID)
+        and come back up, rather than accepting the still-running old
+        service as "complete."
 
         :param timeout: Max seconds to wait for upgrade completion.
         :param settle_time: Extra seconds after upgrade is confirmed
@@ -418,6 +419,8 @@ class TimingMonitor:
         """
         wait_time = timeout if timeout is not None else self._timeout
         deadline = time.time() + wait_time
+        initial_pid = self._state.initial_svc_pid
+        svc_went_down = False
 
         while time.time() < deadline and not self._stop_event.is_set():
             if self._all_detected.is_set():
@@ -428,25 +431,48 @@ class TimingMonitor:
             svc_running = (
                 svc_info.exists and svc_info.state == "RUNNING"
             )
-            process_running = _is_process_running("stAgentSvc.exe")
+            current_pid = _get_process_pid("stAgentSvc.exe")
+            process_running = current_pid is not None
             install_dir = LocalClient.get_install_dir(
                 self._target_64_bit
             )
             exe_exists = (install_dir / "stAgentSvc.exe").is_file()
 
-            if svc_running and process_running and exe_exists:
+            # Track whether the service has gone down during the wait
+            if not svc_running or not process_running:
+                if not svc_went_down:
+                    log.info(
+                        "Service went down (svc_running=%s, "
+                        "process=%s) — waiting for restart",
+                        svc_running, process_running,
+                    )
+                    svc_went_down = True
+
+            # Upgrade is complete when:
+            # - Service is running with a new PID (different from
+            #   baseline), OR
+            # - Service went down and came back up
+            pid_changed = (
+                initial_pid is not None
+                and current_pid is not None
+                and current_pid != initial_pid
+            )
+            restarted = svc_went_down and svc_running and process_running
+
+            if (pid_changed or restarted) and exe_exists:
                 log.info(
-                    "Upgrade complete — service running, process "
-                    "alive, exe present. Settling for %.0fs...",
-                    settle_time,
+                    "Upgrade complete — service running (pid %s→%s), "
+                    "exe present. Settling for %.0fs...",
+                    initial_pid, current_pid, settle_time,
                 )
                 self._all_detected.wait(timeout=settle_time)
                 return True
 
             log.debug(
-                "Waiting for upgrade complete: svc_running=%s, "
-                "process=%s, exe=%s",
-                svc_running, process_running, exe_exists,
+                "Waiting: svc_running=%s, pid=%s (initial=%s), "
+                "svc_went_down=%s, exe=%s",
+                svc_running, current_pid, initial_pid,
+                svc_went_down, exe_exists,
             )
             time.sleep(self._poll_interval)
 

@@ -268,13 +268,13 @@ class TestGetDownloadLink:
 class TestClose:
     """Tests for detach behavior."""
 
-    def test_close_does_not_quit_browser(self) -> None:
-        """close() must NOT call driver.quit() (would kill user's Chrome)."""
+    def test_close_uses_quit(self) -> None:
+        """close() calls driver.quit() to end the WebDriver session."""
         browser = GmailBrowser(email_address="user@example.com")
         mock_driver = MagicMock()
         browser._driver = mock_driver
         browser.close()
-        mock_driver.quit.assert_not_called()
+        mock_driver.quit.assert_called_once()
         assert browser._driver is None
 
     def test_context_manager(self) -> None:
