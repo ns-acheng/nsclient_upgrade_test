@@ -189,6 +189,7 @@ class GmailBrowser:
         timeout: int = DEFAULT_TIMEOUT,
         skip_count: int = 0,
         exclude_urls: Optional[list[str]] = None,
+        max_rows: Optional[int] = None,
     ) -> str:
         """
         Navigate Gmail, find the invite email, and return the download URL.
@@ -199,6 +200,8 @@ class GmailBrowser:
         :param skip_count: Number of old emails to ignore (newest-first).
             Pass the value returned by :meth:`count_matching_emails`.
         :param exclude_urls: URLs to skip (already tried and failed).
+        :param max_rows: Maximum number of email rows to check per pass.
+            Defaults to None (check all new rows).
         :return: Download URL string.
         :raises TimeoutError: If the email or link is not found in time.
         :raises RuntimeError: If the browser is not connected.
@@ -293,11 +296,14 @@ class GmailBrowser:
                 continue
 
             # Step 5: Iterate only new rows (indices 0..new_count-1)
+            check_count = new_count
+            if max_rows is not None:
+                check_count = min(new_count, max_rows)
             log.info(
-                "%d new email(s) found (%d total, %d skipped)",
-                new_count, row_count, skip_count,
+                "%d new email(s) found (%d total, %d skipped, checking %d)",
+                new_count, row_count, skip_count, check_count,
             )
-            for row_idx in range(new_count):
+            for row_idx in range(check_count):
                 # Click the row by index (no offsetParent guard —
                 # Gmail rows can report null offsetParent while visible)
                 clicked = driver.execute_script(f"""
@@ -370,7 +376,10 @@ class GmailBrowser:
 
         :return: Unwrapped URL, or empty string if not found.
         """
-        from selenium.common.exceptions import TimeoutException
+        from selenium.common.exceptions import (
+            StaleElementReferenceException,
+            TimeoutException,
+        )
 
         for link_text in link_texts:
             xpath = f'//a[contains(text(), "{link_text}")]'
@@ -378,8 +387,23 @@ class GmailBrowser:
                 link_el = WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.XPATH, xpath))
                 )
-                raw_href = link_el.get_attribute("href") or ""
-                return self._unwrap_google_redirect(raw_href)
+                # Retry once on stale element (DOM may refresh after
+                # navigating back from a previous email)
+                for attempt in range(2):
+                    try:
+                        raw_href = link_el.get_attribute("href") or ""
+                        return self._unwrap_google_redirect(raw_href)
+                    except StaleElementReferenceException:
+                        if attempt == 0:
+                            log.info(
+                                "Stale element — re-finding link"
+                            )
+                            time.sleep(1)
+                            link_el = driver.find_element(
+                                By.XPATH, xpath,
+                            )
+                        else:
+                            raise
             except TimeoutException:
                 log.info("Link text %r not found, trying next", link_text)
                 continue

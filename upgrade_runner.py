@@ -779,7 +779,7 @@ class UpgradeRunner:
 
             # Fallback: grab the latest matched email regardless of age
             url = self._gmail_browser.get_download_link(
-                skip_count=0, timeout=10,
+                skip_count=0, timeout=10, max_rows=3,
             )
             log.info(
                 "Auto-extracted download link (existing email): %s",
