@@ -179,12 +179,17 @@ class WebUIClient:
         self,
         search_config: str = "",
         schedule_minutes: int = 2,
+        target_64_bit: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
         Enable auto-upgrade to the latest release and schedule it.
 
+        Disables golden-upgrade flags and optionally sets the 64-bit
+        flag in a single API call.
+
         :param search_config: Config name (empty for default).
         :param schedule_minutes: Minutes from now to trigger upgrade.
+        :param target_64_bit: If not None, set updateWin64Bit (True=64-bit).
         :return: API response dict.
         """
         upgrade_time = (
@@ -200,10 +205,17 @@ class WebUIClient:
             "Enabling auto-upgrade to LATEST release, schedule=%s (now + %d min), config=%r",
             upgrade_time, schedule_minutes, search_config or "(default)",
         )
+        kwargs: dict[str, Any] = {
+            "clientAllowAutoUpdate": 1,
+            "allowAutoGoldenUpdate": 0,
+            "goldenReleaseVersion": "",
+            "goldenDotReleaseUpdate": 0,
+            "useScheduledUpgrade": schedule,
+        }
+        if target_64_bit is not None:
+            kwargs["updateWin64Bit"] = 1 if target_64_bit else 0
         return self.update_client_config(
-            search_config=search_config,
-            clientAllowAutoUpdate=1,
-            useScheduledUpgrade=schedule,
+            search_config=search_config, **kwargs,
         )
 
     def enable_upgrade_golden(
@@ -212,14 +224,18 @@ class WebUIClient:
         dot: bool = False,
         search_config: str = "",
         schedule_minutes: int = 2,
+        target_64_bit: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
         Enable auto-upgrade to a specific golden release and schedule it.
+
+        Optionally sets the 64-bit flag in the same API call.
 
         :param golden_version: Target golden version string (e.g. '90.0.0').
         :param dot: If True, enable dot release updates within the golden.
         :param search_config: Config name (empty for default).
         :param schedule_minutes: Minutes from now to trigger upgrade.
+        :param target_64_bit: If not None, set updateWin64Bit (True=64-bit).
         :return: API response dict.
         """
         upgrade_time = (
@@ -235,13 +251,17 @@ class WebUIClient:
             "Enabling auto-upgrade to GOLDEN release %s (dot=%s), schedule=%s (now + %d min), config=%r",
             golden_version, dot, upgrade_time, schedule_minutes, search_config or "(default)",
         )
+        kwargs: dict[str, Any] = {
+            "clientAllowAutoUpdate": 1,
+            "allowAutoGoldenUpdate": 1,
+            "goldenReleaseVersion": golden_version,
+            "goldenDotReleaseUpdate": 1 if dot else 0,
+            "useScheduledUpgrade": schedule,
+        }
+        if target_64_bit is not None:
+            kwargs["updateWin64Bit"] = 1 if target_64_bit else 0
         return self.update_client_config(
-            search_config=search_config,
-            clientAllowAutoUpdate=1,
-            allowAutoGoldenUpdate=1,
-            goldenReleaseVersion=golden_version,
-            goldenDotReleaseUpdate=1 if dot else 0,
-            useScheduledUpgrade=schedule,
+            search_config=search_config, **kwargs,
         )
 
     # ── 64-bit Upgrade Flag ──────────────────────────────────────────

@@ -161,11 +161,10 @@ class UpgradeRunner:
             self._create_log_dir(version_before, expected)
 
             # Trigger upgrade via WebUI
-            self.webui.disable_auto_upgrade(search_config=self.config_name)
-            self.webui.set_update_win64bit(
-                enable=self.target_64_bit, search_config=self.config_name,
+            self.webui.enable_upgrade_latest(
+                search_config=self.config_name,
+                target_64_bit=self.target_64_bit,
             )
-            self.webui.enable_upgrade_latest(search_config=self.config_name)
             self._upgrade_enabled = True
             self.client.sync_config_from_tenant(
                 is_64_bit=self.source_64_bit, wait_seconds=10,
@@ -314,12 +313,10 @@ class UpgradeRunner:
             self._create_log_dir(version_before, expected)
 
             # Trigger golden upgrade via WebUI
-            self.webui.disable_auto_upgrade(search_config=self.config_name)
-            self.webui.set_update_win64bit(
-                enable=self.target_64_bit, search_config=self.config_name,
-            )
             self.webui.enable_upgrade_golden(
-                golden_version, dot=dot, search_config=self.config_name,
+                golden_version, dot=dot,
+                search_config=self.config_name,
+                target_64_bit=self.target_64_bit,
             )
             self._upgrade_enabled = True
             self.client.sync_config_from_tenant(

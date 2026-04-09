@@ -181,8 +181,8 @@ class TestUpgradeToLatest:
 
         runner.run_upgrade_to_latest(from_version="92.0.0")
 
-        # disable_auto_upgrade called at least twice: once in _prepare, once in _cleanup
-        assert mock_webui.disable_auto_upgrade.call_count >= 2
+        # disable_auto_upgrade called in _cleanup
+        assert mock_webui.disable_auto_upgrade.call_count >= 1
 
     def test_cleanup_skips_rollback_when_upgrade_never_enabled(
         self,
@@ -229,6 +229,7 @@ class TestUpgradeToGolden:
         assert result.version_after == "90.0.0.100"
         mock_webui.enable_upgrade_golden.assert_called_once_with(
             "90.0.0", dot=False, search_config="",
+            target_64_bit=False,
         )
 
     def test_golden_latest_with_dot(
@@ -253,6 +254,7 @@ class TestUpgradeToGolden:
         assert result.version_after == "90.1.0.300"
         mock_webui.enable_upgrade_golden.assert_called_once_with(
             "90.0.0", dot=True, search_config="",
+            target_64_bit=False,
         )
 
     def test_auto_picks_from_version(

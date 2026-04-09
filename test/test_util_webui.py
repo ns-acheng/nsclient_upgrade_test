@@ -336,6 +336,9 @@ class TestUpgradeSchedule:
         config_instance.update_client_config.assert_called_once_with(
             search_config="",
             clientAllowAutoUpdate=1,
+            allowAutoGoldenUpdate=0,
+            goldenReleaseVersion="",
+            goldenDotReleaseUpdate=0,
             useScheduledUpgrade={
                 "frequencyType": "daily",
                 "weekDay": [],
@@ -393,6 +396,9 @@ class TestUpgradeSchedule:
         config_instance.update_client_config.assert_called_once_with(
             search_config="cfg",
             clientAllowAutoUpdate=1,
+            allowAutoGoldenUpdate=0,
+            goldenReleaseVersion="",
+            goldenDotReleaseUpdate=0,
             useScheduledUpgrade={
                 "frequencyType": "daily",
                 "weekDay": [],
