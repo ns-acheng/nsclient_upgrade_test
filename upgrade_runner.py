@@ -72,6 +72,7 @@ class UpgradeRunner:
         target_64_bit: bool = False,
         reboot_time: Optional[int] = None,
         reboot_delay: int = 5,
+        reboot_action: Optional[int] = None,
         stop_event: Optional[threading.Event] = None,
         log_dir: Optional[Path] = None,
     ) -> None:
@@ -90,6 +91,8 @@ class UpgradeRunner:
         :param target_64_bit: Whether the upgrade target is 64-bit.
         :param reboot_time: Timing number (1-11) that triggers a reboot.
         :param reboot_delay: Seconds before reboot after timing fires.
+        :param reboot_action: Action at reboot timing (2=kill monitor+reboot,
+                              3=kill monitor+msiexec+reboot). None=default reboot.
         :param stop_event: Threading event for graceful shutdown (ESC key).
         :param log_dir: Pre-created log folder (from main.py).
         """
@@ -103,6 +106,7 @@ class UpgradeRunner:
         self.target_64_bit = target_64_bit
         self.reboot_time = reboot_time
         self.reboot_delay = reboot_delay
+        self.reboot_action = reboot_action
         self.stop_event = stop_event or threading.Event()
         self._upgrade_enabled = False
         self._log_dir: Optional[Path] = log_dir
@@ -572,6 +576,7 @@ class UpgradeRunner:
             target_64_bit=self.target_64_bit,
             reboot_time=self.reboot_time,
             reboot_delay=self.reboot_delay,
+            reboot_action=self.reboot_action,
             log_dir=str(self._log_dir) if self._log_dir else "",
         )
         monitor.start()

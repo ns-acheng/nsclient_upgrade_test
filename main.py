@@ -140,6 +140,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--rebootdelay", type=int, default=5,
         help="Seconds to wait after timing fires before rebooting (default: 5)",
     )
+    upgrade_parser.add_argument(
+        "--action", type=int, default=None,
+        choices=[2, 3],
+        help=(
+            "Action to perform at reboot timing: "
+            "2 = kill stAgentSvcMon then reboot, "
+            "3 = kill stAgentSvcMon + msiexec then reboot"
+        ),
+    )
 
     # ── disable-upgrade ─────────────────────────────────────────
     disable_parser = subparsers.add_parser(
@@ -418,6 +427,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         target_64_bit=args.target_64_bit,
         reboot_time=args.reboottime,
         reboot_delay=args.rebootdelay,
+        reboot_action=args.action,
         stop_event=stop_event,
         log_dir=log_dir,
     )

@@ -96,6 +96,7 @@ class MonitorState:
     reboot_triggered: bool = False
     pre_reboot_elapsed: float = 0.0
     log_dir: str = ""
+    reboot_action: Optional[int] = None
 
 
 # ── State persistence ────────────────────────────────────────────────
@@ -315,6 +316,7 @@ class TimingMonitor:
         target_64_bit: bool,
         reboot_time: Optional[int] = None,
         reboot_delay: int = 5,
+        reboot_action: Optional[int] = None,
         timeout: int = MONITOR_TIMEOUT,
         poll_interval: float = POLL_INTERVAL,
         state: Optional[MonitorState] = None,
@@ -341,6 +343,7 @@ class TimingMonitor:
                 target_64_bit=target_64_bit,
                 reboot_time=reboot_time,
                 reboot_delay=reboot_delay,
+                reboot_action=reboot_action,
                 initial_svc_pid=None,
                 initial_mon_pid=None,
                 initial_mon_version="",
@@ -633,25 +636,57 @@ class TimingMonitor:
     # ── Reboot trigger ───────────────────────────────────────────
 
     def _trigger_reboot(self, elapsed: float) -> None:
-        """Save state, create scheduled task, and trigger reboot."""
+        """Save state, create scheduled task, and trigger reboot.
+
+        When ``reboot_action`` is set the reboot sequence changes:
+
+        * **Action 2** — kill ``stAgentSvcMon.exe`` then reboot immediately.
+        * **Action 3** — kill ``stAgentSvcMon.exe`` **and** ``msiexec.exe``
+          then reboot immediately.
+        * **None / default** — reboot after ``reboot_delay`` seconds.
+        """
         self._state.reboot_triggered = True
         self._state.pre_reboot_elapsed = elapsed
         save_monitor_state(self._state)
 
         create_continue_task()
 
-        log.info(
-            "Timing %d fired — rebooting in %ds",
-            self._state.reboot_time,
-            self._state.reboot_delay,
-        )
-        subprocess.run(
-            [
-                "shutdown", "/r", "/f", "/t",
-                str(self._state.reboot_delay),
-            ],
-            capture_output=True, text=True, timeout=10,
-        )
+        action = self._state.reboot_action
+
+        if action in (2, 3):
+            # Kill stAgentSvcMon.exe
+            log.info("Action %d: killing stAgentSvcMon.exe", action)
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "stAgentSvcMon.exe"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if action == 3:
+                log.info("Action 3: killing msiexec.exe")
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "msiexec.exe"],
+                    capture_output=True, text=True, timeout=10,
+                )
+            log.info(
+                "Timing %d fired (action %d) — rebooting immediately",
+                self._state.reboot_time, action,
+            )
+            subprocess.run(
+                ["shutdown", "/r", "/f", "/t", "0"],
+                capture_output=True, text=True, timeout=10,
+            )
+        else:
+            log.info(
+                "Timing %d fired — rebooting in %ds",
+                self._state.reboot_time,
+                self._state.reboot_delay,
+            )
+            subprocess.run(
+                [
+                    "shutdown", "/r", "/f", "/t",
+                    str(self._state.reboot_delay),
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
 
     # ── Detector methods ─────────────────────────────────────────
 

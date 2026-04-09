@@ -171,11 +171,18 @@ class GmailBrowser:
                 )
             )
         except TimeoutException:
-            search_box = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, 'input[name="q"]')
+            try:
+                search_box = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, 'input[name="q"]')
+                    )
                 )
-            )
+            except TimeoutException:
+                log.info(
+                    "Search box not found — inbox may be empty, "
+                    "nothing to mark as read"
+                )
+                return 0
 
         search_query = (
             f'is:unread subject:("{SEARCH_SUBJECT}") '
