@@ -291,6 +291,11 @@ class GmailBrowser:
         driver = self._driver
         deadline = time.monotonic() + timeout
 
+        # Fingerprint tracks row snippet text so we can detect
+        # new messages that Gmail threads into an existing row
+        # (row count stays the same but content changes).
+        baseline_fp: Optional[str] = None
+
         log.info(
             "Polling inbox DOM for new unread email "
             "(baseline=%d, timeout=%ds)",
@@ -324,24 +329,42 @@ class GmailBrowser:
                 continue
 
             # Count unread rows (tr.zE) whose text contains
-            # the invite subject fragment
-            count = int(driver.execute_script(
+            # the invite subject fragment, and capture a content
+            # fingerprint to detect threaded replies.
+            result = driver.execute_script(
                 "var rows = document.querySelectorAll('tr.zE');"
                 "var frag = arguments[0].toLowerCase();"
-                "var c = 0;"
+                "var c = 0, fp = [];"
                 "for (var i = 0; i < rows.length; i++) {"
-                "  if ((rows[i].textContent || '')"
-                "      .toLowerCase().indexOf(frag) !== -1) c++;"
+                "  var txt = (rows[i].textContent || '');"
+                "  if (txt.toLowerCase().indexOf(frag)"
+                "      !== -1) {"
+                "    c++;"
+                "    fp.push(txt.substring(0, 200));"
+                "  }"
                 "}"
-                "return c;",
+                "return {count: c, fp: fp.join('|||')};",
                 SEARCH_SUBJECT,
-            ) or 0)
+            ) or {"count": 0, "fp": ""}
+
+            count = int(result.get("count", 0))
+            fp = result.get("fp", "")
+
+            if baseline_fp is None:
+                baseline_fp = fp
 
             if count > baseline:
                 log.info(
                     "New unread email detected in inbox "
                     "(%d > %d)",
                     count, baseline,
+                )
+                return True
+
+            if fp != baseline_fp:
+                log.info(
+                    "Inbox content changed (likely threaded "
+                    "reply) — treating as new email"
                 )
                 return True
 
@@ -669,9 +692,15 @@ class GmailBrowser:
         for link_text in link_texts:
             xpath = f'//a[contains(text(), "{link_text}")]'
             try:
-                link_el = WebDriverWait(driver, 10).until(
+                WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, xpath))
                 )
+                # Use find_elements and take the last match so that
+                # in threaded views the newest message's link wins.
+                elements = driver.find_elements(By.XPATH, xpath)
+                if not elements:
+                    continue
+                link_el = elements[-1]
                 # Retry once on stale element (DOM may refresh after
                 # navigating back from a previous email)
                 for attempt in range(2):
@@ -684,9 +713,12 @@ class GmailBrowser:
                                 "Stale element — re-finding link"
                             )
                             time.sleep(1)
-                            link_el = driver.find_element(
+                            elements = driver.find_elements(
                                 By.XPATH, xpath,
                             )
+                            if not elements:
+                                break
+                            link_el = elements[-1]
                         else:
                             raise
             except TimeoutException:

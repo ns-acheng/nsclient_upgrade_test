@@ -268,13 +268,14 @@ class InstallerManager:
         if not self._gmail_browser.wait_for_new_unread(
             baseline=baseline, timeout=30,
         ):
-            raise RuntimeError(
-                "No new unread email within 30s after invite"
+            log.warning(
+                "Polling did not detect new email "
+                "— proceeding to search (may be threaded)"
             )
 
         # Phase 3: Open the newest email and extract link
         url = self._gmail_browser.get_download_link(
-            timeout=10, max_rows=1,
+            timeout=60, max_rows=1,
         )
         log.info("Auto-extracted download link: %s", url)
         return url
