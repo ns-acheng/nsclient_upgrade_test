@@ -300,11 +300,10 @@ class GmailBrowser:
                 log.warning("Stop event — aborting email wait")
                 return False
 
-            if "mail.google.com" not in (
-                driver.current_url or ""
-            ):
-                driver.get(GMAIL_URL)
-
+            # Always navigate to Gmail to force a fresh search.
+            # Without this, the page may stay on Inbox or show
+            # stale cached search results.
+            driver.get(GMAIL_URL)
             self._dismiss_overlays(driver, By)
 
             try:
