@@ -25,7 +25,7 @@ This tool depends on `pylark-webapi-lib` for tenant WebUI API calls. It must be
 installed separately. Clone the repo and install it:
 
 ```bash
-git clone <pylark-webapi-lib repo URL>
+git clone [<pylark-webapi-lib repo URL>](https://github.com/netskope-qe/pylark-webapi-lib)
 pip install -e /path/to/pylark-webapi-lib
 ```
 
