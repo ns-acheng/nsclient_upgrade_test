@@ -111,6 +111,7 @@ class UpgradeRunner:
         self.reboot_delay = reboot_delay
         self.stop_event = stop_event or threading.Event()
         self._cloned_installer: Optional[Path] = None
+        self._gmail_browser: Any = None
         self._upgrade_enabled = False
         self._log_dir: Optional[Path] = log_dir
 
@@ -715,7 +716,10 @@ class UpgradeRunner:
             time.sleep(15)
 
         # Install with msiexec
-        self.client.install_msi(str(installer), log_dir=self._log_dir)
+        try:
+            self.client.install_msi(str(installer), log_dir=self._log_dir)
+        finally:
+            self._close_gmail_browser()
 
         # Wait for service to start
         if not self.client.wait_for_service():
@@ -739,29 +743,31 @@ class UpgradeRunner:
         try:
             from util_email import GmailBrowser
 
-            with GmailBrowser(
+            self._gmail_browser = GmailBrowser(
                 email_address=invite_email,
                 is_64_bit=self.source_64_bit,
                 tenant_hostname=self.webui.hostname,
                 stop_event=self.stop_event,
-            ) as browser:
-                browser.connect()
-                old_count = browser.count_matching_emails()
-                log.info(
-                    "Found %d existing email(s) — will skip these",
-                    old_count,
-                )
+            )
+            self._gmail_browser.connect()
+            old_count = self._gmail_browser.count_matching_emails()
+            log.info(
+                "Found %d existing email(s) — will skip these",
+                old_count,
+            )
 
-                log.info("Sending email invite to %s", invite_email)
-                self.webui.send_email_invite(invite_email)
-                invite_sent = True
+            log.info("Sending email invite to %s", invite_email)
+            self.webui.send_email_invite(invite_email)
+            invite_sent = True
 
-                log.info("Waiting 10s for invite email to arrive")
-                time.sleep(10)
+            log.info("Waiting 10s for invite email to arrive")
+            time.sleep(10)
 
-                url = browser.get_download_link(skip_count=old_count)
-                log.info("Auto-extracted download link: %s", url)
-                return url
+            url = self._gmail_browser.get_download_link(
+                skip_count=old_count,
+            )
+            log.info("Auto-extracted download link: %s", url)
+            return url
         except Exception:
             log.warning(
                 "Auto-email extraction failed — falling back to "
@@ -772,6 +778,15 @@ class UpgradeRunner:
                 log.info("Sending email invite to %s", invite_email)
                 self.webui.send_email_invite(invite_email)
             return ""
+
+    def _close_gmail_browser(self) -> None:
+        """Close the Gmail browser session if one is open."""
+        if self._gmail_browser is not None:
+            try:
+                self._gmail_browser.close()
+            except Exception:
+                pass
+            self._gmail_browser = None
 
     @staticmethod
     def _find_base_installer(base_filename: str) -> Optional[Path]:
