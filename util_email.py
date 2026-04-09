@@ -218,9 +218,9 @@ class GmailBrowser:
             )
             select_all.click()
             time.sleep(0.5)
-        except TimeoutException:
+        except (TimeoutException, Exception):
             log.warning(
-                "Could not find select-all checkbox "
+                "Could not click select-all checkbox "
                 "— skipping mark as read"
             )
             return 0
