@@ -24,6 +24,9 @@ DEFAULT_DEBUG_PORT = 9222
 SEARCH_RETRY_INTERVAL = 5  # seconds between retries
 DEFAULT_TIMEOUT = 300  # total seconds to wait for email
 SUBJECT_TEMPLATE = '[EXTERNAL] Netskope New User Onboarding for "{email}"'
+# Gmail search-safe version — avoids nested quotes that break
+# subject:("...") syntax.  The email address is matched separately.
+SEARCH_SUBJECT = "Netskope New User Onboarding"
 LINK_TEXTS_64 = ["Windows Client (64-bit)", "Windows Client"]
 LINK_TEXTS_32 = ["Windows Client"]
 
@@ -154,8 +157,6 @@ class GmailBrowser:
         from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._driver
-        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
-
         if "mail.google.com" not in (driver.current_url or ""):
             log.info("Navigating to Gmail")
             driver.get(GMAIL_URL)
@@ -176,7 +177,10 @@ class GmailBrowser:
                 )
             )
 
-        search_query = f'is:unread subject:("{subject}")'
+        search_query = (
+            f'is:unread subject:("{SEARCH_SUBJECT}") '
+            f'"{self._email_address}"'
+        )
         log.info("Marking old unread emails as read: %s", search_query)
         search_box.clear()
         search_box.send_keys(search_query)
@@ -280,8 +284,10 @@ class GmailBrowser:
 
         driver = self._driver
         deadline = time.monotonic() + timeout
-        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
-        search_query = f'is:unread subject:("{subject}")'
+        search_query = (
+            f'is:unread subject:("{SEARCH_SUBJECT}") '
+            f'"{self._email_address}"'
+        )
 
         log.info(
             "Polling for new unread email "
@@ -371,7 +377,6 @@ class GmailBrowser:
         from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._driver
-        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
 
         if "mail.google.com" not in (driver.current_url or ""):
             driver.get(GMAIL_URL)
@@ -392,7 +397,10 @@ class GmailBrowser:
                 )
             )
 
-        search_query = f'is:unread subject:("{subject}")'
+        search_query = (
+            f'is:unread subject:("{SEARCH_SUBJECT}") '
+            f'"{self._email_address}"'
+        )
         log.info("Counting unread emails: %s", search_query)
         search_box.clear()
         search_box.send_keys(search_query)
@@ -434,7 +442,6 @@ class GmailBrowser:
         from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._driver
-        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
 
         if "mail.google.com" not in (driver.current_url or ""):
             log.info("Navigating to Gmail")
@@ -455,7 +462,10 @@ class GmailBrowser:
                 )
             )
 
-        search_query = f'subject:("{subject}")'
+        search_query = (
+            f'subject:("{SEARCH_SUBJECT}") '
+            f'"{self._email_address}"'
+        )
         log.info("Counting existing emails: %s", search_query)
         search_box.clear()
         search_box.send_keys(search_query)
@@ -506,7 +516,6 @@ class GmailBrowser:
 
         driver = self._driver
         deadline = time.monotonic() + timeout
-        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
         link_texts = LINK_TEXTS_64 if self._is_64_bit else LINK_TEXTS_32
 
         while True:
@@ -539,7 +548,10 @@ class GmailBrowser:
                 )
 
             # Step 3: Search for unread emails matching the subject
-            search_query = f'is:unread subject:("{subject}")'
+            search_query = (
+                f'is:unread subject:("{SEARCH_SUBJECT}") '
+                f'"{self._email_address}"'
+            )
             log.info("Searching Gmail: %s", search_query)
             search_box.clear()
             search_box.send_keys(search_query)

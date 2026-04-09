@@ -159,18 +159,9 @@ class InstallerManager:
             download_link = self._fetch_download_link_from_gmail(
                 invite_email
             )
-            if not download_link:
-                raise RuntimeError(
-                    "Auto-email extraction failed — aborting install"
-                )
-            if download_link:
-                installer_name = self._get_installer_name(download_link)
-                if installer_name:
-                    print(f"Installer name: {installer_name}")
-            else:
-                log.info(
-                    "No download link provided — using base installer name"
-                )
+            installer_name = self._get_installer_name(download_link)
+            if installer_name:
+                print(f"Installer name: {installer_name}")
 
         # Resolve base installer and copy to tenant-specific name
         installer = resolve_installer(base_filename, installer_name)
@@ -249,50 +240,37 @@ class InstallerManager:
         Returns the URL on success, or an empty string on any failure
         (caller falls back to the manual input prompt).
         """
-        invite_sent = False
-        try:
-            from util_email import GmailBrowser
+        from util_email import GmailBrowser
 
-            self._gmail_browser = GmailBrowser(
-                email_address=invite_email,
-                is_64_bit=self.source_64_bit,
-                tenant_hostname=self.webui.hostname,
-                stop_event=self.stop_event,
+        self._gmail_browser = GmailBrowser(
+            email_address=invite_email,
+            is_64_bit=self.source_64_bit,
+            tenant_hostname=self.webui.hostname,
+            stop_event=self.stop_event,
+        )
+        self._gmail_browser.connect()
+
+        # Phase 1: Clear old unread emails and capture baseline
+        self._gmail_browser.mark_all_as_read()
+        baseline = self._gmail_browser.count_unread_emails()
+
+        log.info("Sending email invite to %s", invite_email)
+        self.webui.send_email_invite(invite_email)
+
+        # Phase 2: Poll until new unread email arrives (cheap)
+        if not self._gmail_browser.wait_for_new_unread(
+            baseline=baseline, timeout=30,
+        ):
+            raise RuntimeError(
+                "No new unread email within 30s after invite"
             )
-            self._gmail_browser.connect()
 
-            # Phase 1: Clear old unread emails and capture baseline
-            self._gmail_browser.mark_all_as_read()
-            baseline = self._gmail_browser.count_unread_emails()
-
-            log.info("Sending email invite to %s", invite_email)
-            self.webui.send_email_invite(invite_email)
-            invite_sent = True
-
-            # Phase 2: Poll until new unread email arrives (cheap)
-            if not self._gmail_browser.wait_for_new_unread(
-                baseline=baseline, timeout=30,
-            ):
-                raise TimeoutError(
-                    "No new unread email within 30s"
-                )
-
-            # Phase 3: Open the newest email and extract link
-            url = self._gmail_browser.get_download_link(
-                timeout=10, max_rows=1,
-            )
-            log.info("Auto-extracted download link: %s", url)
-            return url
-        except Exception:
-            log.warning(
-                "Auto-email extraction failed — falling back to "
-                "manual input",
-                exc_info=True,
-            )
-            if not invite_sent:
-                log.info("Sending email invite to %s", invite_email)
-                self.webui.send_email_invite(invite_email)
-            return ""
+        # Phase 3: Open the newest email and extract link
+        url = self._gmail_browser.get_download_link(
+            timeout=10, max_rows=1,
+        )
+        log.info("Auto-extracted download link: %s", url)
+        return url
 
     def _close_gmail_browser(self) -> None:
         """Close the Gmail browser session if one is open."""
