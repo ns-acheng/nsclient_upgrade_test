@@ -699,7 +699,17 @@ class UpgradeRunner:
         return self._log_dir
 
     def _collect_failure_logs(self) -> None:
-        """Collect nsdiag log bundle when the final result is failure."""
+        """Collect nsdiag log bundle when the final result is failure.
+
+        Skips collection if upgrade was never triggered (e.g. install
+        or email extraction failure) — there is nothing useful to
+        collect in that case.
+        """
+        if not self._upgrade_enabled:
+            log.info(
+                "Skipping log bundle — upgrade was not started"
+            )
+            return
         log_dir = self._log_dir or LOG_DIR
         effective_64 = self.target_64_bit or self.source_64_bit
         log.info("Collecting log bundle for failure analysis...")

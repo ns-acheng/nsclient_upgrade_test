@@ -253,6 +253,167 @@ class GmailBrowser:
 
         return count
 
+    def wait_for_new_unread(
+        self,
+        baseline: int = 0,
+        timeout: int = DEFAULT_TIMEOUT,
+    ) -> bool:
+        """
+        Poll Gmail until the unread count exceeds *baseline*.
+
+        Lightweight — only searches and counts DOM rows, never opens
+        any email.  Call with *baseline* captured **before** sending
+        the invite so that the new email is detected reliably.
+
+        :param baseline: Unread count before the invite was sent.
+        :param timeout: Max seconds to poll.
+        :return: True when a new unread email is detected.
+        """
+        if self._driver is None:
+            raise RuntimeError("Not connected — call connect() first")
+
+        from selenium.common.exceptions import TimeoutException
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.common.keys import Keys
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        driver = self._driver
+        deadline = time.monotonic() + timeout
+        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
+        search_query = f'is:unread subject:("{subject}")'
+
+        log.info(
+            "Polling for new unread email "
+            "(baseline=%d, timeout=%ds)",
+            baseline, timeout,
+        )
+
+        while time.monotonic() < deadline:
+            if self._stop_event and self._stop_event.is_set():
+                log.warning("Stop event — aborting email wait")
+                return False
+
+            if "mail.google.com" not in (
+                driver.current_url or ""
+            ):
+                driver.get(GMAIL_URL)
+
+            self._dismiss_overlays(driver, By)
+
+            try:
+                search_box = WebDriverWait(driver, 15).until(
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR,
+                         'input[aria-label="Search mail"]')
+                    )
+                )
+            except TimeoutException:
+                search_box = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, 'input[name="q"]')
+                    )
+                )
+
+            search_box.clear()
+            search_box.send_keys(search_query)
+            search_box.send_keys(Keys.RETURN)
+
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, "tr.zA")
+                    )
+                )
+                count = int(driver.execute_script(
+                    "return document.querySelectorAll("
+                    "'tr.zA, tr.zE').length;"
+                ))
+            except TimeoutException:
+                count = 0
+
+            if count > baseline:
+                log.info(
+                    "New unread email detected (%d > %d)",
+                    count, baseline,
+                )
+                return True
+
+            remaining = deadline - time.monotonic()
+            log.info(
+                "No new unread email yet (%d, baseline %d) "
+                "— polling in %ds (%.0fs left)",
+                count, baseline,
+                SEARCH_RETRY_INTERVAL, remaining,
+            )
+            time.sleep(SEARCH_RETRY_INTERVAL)
+
+        log.warning(
+            "Timed out waiting for new unread email after %ds",
+            timeout,
+        )
+        return False
+
+    def count_unread_emails(self) -> int:
+        """
+        Count unread emails matching the invite subject.
+
+        :return: Number of matching unread rows (0 if none).
+        :raises RuntimeError: If the browser is not connected.
+        """
+        if self._driver is None:
+            raise RuntimeError("Not connected — call connect() first")
+
+        from selenium.common.exceptions import TimeoutException
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.common.keys import Keys
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        driver = self._driver
+        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
+
+        if "mail.google.com" not in (driver.current_url or ""):
+            driver.get(GMAIL_URL)
+
+        self._dismiss_overlays(driver, By)
+
+        try:
+            search_box = WebDriverWait(driver, 30).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR,
+                     'input[aria-label="Search mail"]')
+                )
+            )
+        except TimeoutException:
+            search_box = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, 'input[name="q"]')
+                )
+            )
+
+        search_query = f'is:unread subject:("{subject}")'
+        log.info("Counting unread emails: %s", search_query)
+        search_box.clear()
+        search_box.send_keys(search_query)
+        search_box.send_keys(Keys.RETURN)
+
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "tr.zA")
+                )
+            )
+            count: int = driver.execute_script(
+                "return document.querySelectorAll("
+                "'tr.zA, tr.zE').length;"
+            )
+        except TimeoutException:
+            count = 0
+
+        log.info("Found %d unread email(s)", count)
+        return count
+
     def count_matching_emails(self) -> int:
         """
         Count how many emails currently match the invite subject.
@@ -504,7 +665,7 @@ class GmailBrowser:
         for link_text in link_texts:
             xpath = f'//a[contains(text(), "{link_text}")]'
             try:
-                link_el = WebDriverWait(driver, 15).until(
+                link_el = WebDriverWait(driver, 5).until(
                     EC.presence_of_element_located((By.XPATH, xpath))
                 )
                 # Retry once on stale element (DOM may refresh after

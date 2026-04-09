@@ -160,19 +160,9 @@ class InstallerManager:
                 invite_email
             )
             if not download_link:
-                print("\n" + "=" * 60)
-                print(
-                    "Auto-email extraction failed. "
-                    "Open the email and copy the download link."
+                raise RuntimeError(
+                    "Auto-email extraction failed — aborting install"
                 )
-                print(
-                    "Example: "
-                    "https://download-tenant.example.com/dlr/win/TOKEN"
-                )
-                print("=" * 60)
-                download_link = input(
-                    "Paste the download link here: "
-                ).strip()
             if download_link:
                 installer_name = self._get_installer_name(download_link)
                 if installer_name:
@@ -270,17 +260,26 @@ class InstallerManager:
                 stop_event=self.stop_event,
             )
             self._gmail_browser.connect()
+
+            # Phase 1: Clear old unread emails and capture baseline
             self._gmail_browser.mark_all_as_read()
+            baseline = self._gmail_browser.count_unread_emails()
 
             log.info("Sending email invite to %s", invite_email)
             self.webui.send_email_invite(invite_email)
             invite_sent = True
 
-            log.info("Waiting 1s for invite email to arrive")
-            time.sleep(1)
+            # Phase 2: Poll until new unread email arrives (cheap)
+            if not self._gmail_browser.wait_for_new_unread(
+                baseline=baseline, timeout=30,
+            ):
+                raise TimeoutError(
+                    "No new unread email within 30s"
+                )
 
+            # Phase 3: Open the newest email and extract link
             url = self._gmail_browser.get_download_link(
-                timeout=30, max_rows=3,
+                timeout=10, max_rows=1,
             )
             log.info("Auto-extracted download link: %s", url)
             return url
@@ -346,24 +345,24 @@ class InstallerManager:
             self._cloned_installer.unlink()
             self._cloned_installer = None
 
-        # Re-send invite to get a fresh token.
-        # The old email is already marked as read (we opened it
-        # to extract the link), so get_download_link with
-        # is:unread will skip it automatically.
+        # The old email is already read (we opened it to extract
+        # the link).  Capture baseline, re-send invite, then poll
+        # until the fresh email arrives.
+        baseline = self._gmail_browser.count_unread_emails()
         log.info("Re-sending email invite to %s", invite_email)
         self.webui.send_email_invite(invite_email)
 
-        # Search for the fresh unread email (up to 60s)
-        log.info("Waiting for fresh unread email (up to 60s)")
-        try:
-            url = self._gmail_browser.get_download_link(
-                timeout=60, max_rows=3,
-            )
-        except TimeoutError:
+        if not self._gmail_browser.wait_for_new_unread(
+            baseline=baseline, timeout=60,
+        ):
             raise RuntimeError(
                 "Install failed (1603) — no fresh unread email "
                 "arrived within 60s after re-send"
             )
+
+        url = self._gmail_browser.get_download_link(
+            timeout=10, max_rows=1,
+        )
 
         log.info("Found fresh download link: %s", url)
         name = self._get_installer_name(url)
