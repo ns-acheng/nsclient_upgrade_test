@@ -1,5 +1,8 @@
 {
     "exploratory2.stg.boomskope.com": {
         "installer_name": "NSClient_addon-exploratory2.stg.boomskope.com_106426_yjm4J0024w207zgYXcyd"
+    },
+	"acheng2.qa.boomskope.com": {
+        "installer_name": "NSClient_addon-acheng2.qa.boomskope.com_9675_z858yu787mheXXB1Tt1I"
     }
 }
