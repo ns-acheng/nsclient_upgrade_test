@@ -762,10 +762,29 @@ class UpgradeRunner:
             log.info("Waiting 1s for invite email to arrive")
             time.sleep(1)
 
+            # Try to find a NEW email for 10 seconds
+            try:
+                url = self._gmail_browser.get_download_link(
+                    skip_count=old_count, timeout=10,
+                )
+                log.info("Auto-extracted download link: %s", url)
+                return url
+            except TimeoutError:
+                if old_count <= 0:
+                    raise
+                log.info(
+                    "No new email in 10s — falling back to "
+                    "latest existing email"
+                )
+
+            # Fallback: grab the latest matched email regardless of age
             url = self._gmail_browser.get_download_link(
-                skip_count=old_count,
+                skip_count=0, timeout=10,
             )
-            log.info("Auto-extracted download link: %s", url)
+            log.info(
+                "Auto-extracted download link (existing email): %s",
+                url,
+            )
             return url
         except Exception:
             log.warning(
@@ -824,8 +843,8 @@ class UpgradeRunner:
             self._cloned_installer.unlink()
             self._cloned_installer = None
 
-        # Retry every 10 s for 60 s
-        deadline = time.monotonic() + 60
+        # Retry every 10 s for 30 s
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             log.info(
@@ -879,7 +898,7 @@ class UpgradeRunner:
                     self._cloned_installer = None
 
         raise RuntimeError(
-            "Install failed (1603) after 60s of email "
+            "Install failed (1603) after 30s of email "
             "retries — aborting"
         )
 
