@@ -181,17 +181,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def connect_with_retry(webui: WebUIClient, cfg: ToolConfig) -> bool:
+def connect_with_retry(webui: WebUIClient, cfg: ToolConfig,
+                       stop_event: threading.Event | None = None) -> bool:
     """
     Try to connect to the tenant with retry for both auth and connection errors.
 
     - Auth failures: re-prompt password up to MAX_LOGIN_ATTEMPTS times.
     - Connection errors (timeout, network): retry up to MAX_CONNECT_RETRIES
       times with a delay, then abort gracefully.
+    - If *stop_event* is set (e.g. ESC pressed), abort immediately.
 
     :param webui: WebUIClient instance.
     :param cfg: ToolConfig (cfg.tenant.password is updated on retry).
-    :return: True if connected, False if all attempts failed.
+    :param stop_event: Optional event checked between retries for early abort.
+    :return: True if connected, False if all attempts failed or stopped.
     """
     hostname = cfg.tenant.hostname
     username = cfg.tenant.username
@@ -199,6 +202,10 @@ def connect_with_retry(webui: WebUIClient, cfg: ToolConfig) -> bool:
     connect_failures = 0
 
     while auth_attempts < MAX_LOGIN_ATTEMPTS:
+        if stop_event and stop_event.is_set():
+            log.info("Stop requested — aborting connection retry")
+            return False
+
         try:
             webui.connect(hostname, username, cfg.tenant.password)
             save_password(cfg.tenant.password, hostname, username)
@@ -222,7 +229,13 @@ def connect_with_retry(webui: WebUIClient, cfg: ToolConfig) -> bool:
                     f"\n  Connection failed ({connect_failures}/{MAX_CONNECT_RETRIES})"
                     f" — retrying in {CONNECT_RETRY_DELAY}s..."
                 )
-                time.sleep(CONNECT_RETRY_DELAY)
+                if stop_event:
+                    stop_event.wait(CONNECT_RETRY_DELAY)
+                    if stop_event.is_set():
+                        log.info("Stop requested — aborting connection retry")
+                        return False
+                else:
+                    time.sleep(CONNECT_RETRY_DELAY)
                 continue
 
             if "invalid username or password" not in str(exc).lower():
@@ -412,7 +425,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
 
     # Connect to WebUI
     webui = WebUIClient()
-    if not connect_with_retry(webui, cfg):
+    if not connect_with_retry(webui, cfg, stop_event=stop_event):
         return 1
 
     log.info("Client and WebUI initialized for upgrade scenario")
@@ -469,7 +482,7 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace,
     client = LocalClient(platform=cfg.client.platform)
 
     webui = WebUIClient()
-    if not connect_with_retry(webui, cfg):
+    if not connect_with_retry(webui, cfg, stop_event=stop_event):
         return 1
 
     runner = UpgradeRunner(
@@ -658,4 +671,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n  Stopped by user (ESC). Exiting.")
+        sys.exit(130)

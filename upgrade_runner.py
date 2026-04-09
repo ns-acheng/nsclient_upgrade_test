@@ -158,12 +158,15 @@ class UpgradeRunner:
         log.info("=" * 70)
         try:
             # Phase 1: Ensure base client is installed
+            self._check_stopped()
             self._installer.ensure_client_installed(
                 from_version, invite_email,
             )
+            self._check_stopped()
             self._sync_and_detect_config()
 
             # Phase 2: Init nsclient + read version
+            self._check_stopped()
             nsclient_ok = self._init_nsclient()
             version_before = self._verifier.get_current_version()
             log.info("Version before upgrade: %s", version_before)
@@ -179,6 +182,7 @@ class UpgradeRunner:
             self._create_log_dir(version_before, expected)
 
             # Trigger upgrade via WebUI
+            self._check_stopped()
             self.webui.enable_upgrade_latest(
                 search_config=self.config_name,
                 target_64_bit=self.target_64_bit,
@@ -317,12 +321,15 @@ class UpgradeRunner:
                     )
 
             # Phase 1: Ensure base client is installed
+            self._check_stopped()
             self._installer.ensure_client_installed(
                 from_version, invite_email,
             )
+            self._check_stopped()
             self._sync_and_detect_config()
 
             # Phase 2: Init nsclient + read version
+            self._check_stopped()
             nsclient_ok = self._init_nsclient()
             version_before = self._verifier.get_current_version()
             log.info("Version before upgrade: %s", version_before)
@@ -343,6 +350,7 @@ class UpgradeRunner:
             self._create_log_dir(version_before, expected)
 
             # Trigger golden upgrade via WebUI
+            self._check_stopped()
             self.webui.enable_upgrade_golden(
                 golden_version, dot=dot,
                 search_config=self.config_name,
@@ -460,12 +468,15 @@ class UpgradeRunner:
         log.info("=" * 70)
         try:
             # Phase 1: Ensure base client is installed
+            self._check_stopped()
             self._installer.ensure_client_installed(
                 from_version, invite_email,
             )
+            self._check_stopped()
             self._sync_and_detect_config()
 
             # Phase 2: Init nsclient + read version
+            self._check_stopped()
             nsclient_ok = self._init_nsclient()
             version_before = self._verifier.get_current_version()
             log.info("Version before: %s", version_before)
@@ -474,6 +485,7 @@ class UpgradeRunner:
             self._create_log_dir(version_before, "disabled")
 
             # Disable auto-upgrade and verify it stays
+            self._check_stopped()
             self.webui.disable_auto_upgrade(
                 search_config=self.config_name,
             )
@@ -598,6 +610,11 @@ class UpgradeRunner:
         monitor.print_report()
 
     # ── Shared Helpers ───────────────────────────────────────────────
+
+    def _check_stopped(self) -> None:
+        """Raise if the stop event (ESC key) has been set."""
+        if self.stop_event.is_set():
+            raise KeyboardInterrupt("Stopped by user (ESC)")
 
     def _init_nsclient(self) -> bool:
         """
