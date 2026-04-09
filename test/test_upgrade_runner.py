@@ -772,7 +772,7 @@ class TestEnsureClientInstalled:
                 "user@example.com",
             )
             mock_browser.get_download_link.assert_called_once_with(
-                skip_count=2, timeout=10,
+                skip_count=2, timeout=30,
             )
             mock_input.assert_not_called()
 

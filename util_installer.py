@@ -219,6 +219,7 @@ class InstallerManager:
         # Install with msiexec (retry on 1603 with next email)
         self._install_msi_with_email_retry(
             installer, base_filename, download_link,
+            invite_email=invite_email or "",
         )
 
         # Wait for service to start
@@ -254,7 +255,7 @@ class InstallerManager:
 
         Flow: connect Chrome → count existing emails → send invite →
         wait for delivery → search only new emails.  If no new email
-        appears in 10 s, falls back to the latest existing match.
+        appears in 30 s, falls back to the latest existing match.
 
         Returns the URL on success, or an empty string on any failure
         (caller falls back to the manual input prompt).
@@ -284,10 +285,10 @@ class InstallerManager:
             log.info("Waiting 1s for invite email to arrive")
             time.sleep(1)
 
-            # Try to find a NEW email for 10 seconds
+            # Try to find a NEW email for 30 seconds
             try:
                 url = self._gmail_browser.get_download_link(
-                    skip_count=old_count, timeout=10,
+                    skip_count=old_count, timeout=30,
                 )
                 log.info("Auto-extracted download link: %s", url)
                 return url
@@ -295,7 +296,7 @@ class InstallerManager:
                 if old_count <= 0:
                     raise
                 log.info(
-                    "No new email in 10s — falling back to "
+                    "No new email in 30s — falling back to "
                     "latest existing email"
                 )
 
@@ -335,15 +336,18 @@ class InstallerManager:
         installer: Path,
         base_filename: str,
         initial_url: str,
+        invite_email: str = "",
     ) -> None:
         """
         Install via msiexec.  On exit code 1603 (wrong email token),
-        retry with the next Gmail email every 10 s for up to 30 s.
+        re-send the invite to get a fresh token and retry.
 
         :param installer: Path to the MSI to install.
         :param base_filename: Base installer name for re-resolving.
         :param initial_url: Download URL used for *installer* (may be
             empty if no email flow was used).
+        :param invite_email: Email address for re-sending the invite
+            on 1603 retry.
         """
         tried_urls: list[str] = []
         if initial_url:
@@ -355,11 +359,11 @@ class InstallerManager:
         except RuntimeError as exc:
             if "exit code 1603" not in str(exc):
                 raise
-            if self._gmail_browser is None:
+            if self._gmail_browser is None or not invite_email:
                 raise
             log.warning(
                 "Install failed (1603) — wrong email token, "
-                "retrying with next email",
+                "will re-send invite and retry",
             )
 
         # Clean up the bad cloned installer
@@ -367,26 +371,44 @@ class InstallerManager:
             self._cloned_installer.unlink()
             self._cloned_installer = None
 
-        # Retry every 10 s for 30 s
-        deadline = time.monotonic() + 30
+        # Re-send invite to get a fresh token, re-count baseline
+        log.info("Re-sending email invite to %s", invite_email)
+        self.webui.send_email_invite(invite_email)
+        try:
+            new_baseline = (
+                self._gmail_browser.count_matching_emails()
+            )
+            self._gmail_old_count = new_baseline
+            log.info(
+                "Re-counted %d existing email(s) — waiting for "
+                "fresh email",
+                new_baseline,
+            )
+        except Exception:
+            log.warning(
+                "Failed to re-count emails — using old baseline"
+            )
+
+        # Wait up to 60s for the fresh email with the new token
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             log.info(
-                "Waiting for next valid email (%.0fs remaining)",
+                "Waiting for fresh email (%.0fs remaining)",
                 remaining,
             )
             try:
                 url = self._gmail_browser.get_download_link(
                     skip_count=self._gmail_old_count,
-                    timeout=min(10, max(1, int(remaining))),
+                    timeout=min(15, max(1, int(remaining))),
                     exclude_urls=tried_urls,
                 )
             except (TimeoutError, RuntimeError):
-                log.info("No new valid email found yet")
+                log.info("No fresh email found yet")
                 continue
 
             tried_urls.append(url)
-            log.info("Found new download link: %s", url)
+            log.info("Found fresh download link: %s", url)
 
             name = self._get_installer_name(url)
             if not name:
@@ -400,6 +422,10 @@ class InstallerManager:
                 log.warning("Could not resolve installer — skipping")
                 continue
             self._cloned_installer = new_installer
+
+            # Wait for the tenant to register the new token
+            log.info("Waiting 15s for tenant to accept the token")
+            time.sleep(15)
 
             try:
                 self.client.install_msi(
@@ -420,7 +446,7 @@ class InstallerManager:
                     self._cloned_installer = None
 
         raise RuntimeError(
-            "Install failed (1603) after 30s of email "
+            "Install failed (1603) after 60s of email "
             "retries — aborting"
         )
 
