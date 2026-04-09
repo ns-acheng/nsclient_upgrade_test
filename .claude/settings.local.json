@@ -17,7 +17,13 @@
       "Bash(grep:*)",
       "Bash(tasklist)",
       "Bash(powershell:*)",
-      "Bash(netstat -ano)"
+      "Bash(netstat -ano)",
+      "Bash(wmic process:*)",
+      "Bash(cmd.exe //c \"wmic process where \\\\\"name='cmd.exe'\\\\\" get ProcessId,CommandLine /FORMAT:CSV\")",
+      "Bash(wc -l /c/git/nsclient_upgrade_test/*.py /c/git/nsclient_upgrade_test/test/*.py)",
+      "Bash(echo \"EXIT: $?\")",
+      "Read(//c/dump/stAgentSvc.exe/**)",
+      "Read(//c/ProgramData/netskope/stagent/logs/**)"
     ]
   }
 }

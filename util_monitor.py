@@ -95,6 +95,7 @@ class MonitorState:
     timings: dict[str, float] = field(default_factory=dict)
     reboot_triggered: bool = False
     pre_reboot_elapsed: float = 0.0
+    log_dir: str = ""
 
 
 # ── State persistence ────────────────────────────────────────────────
@@ -262,30 +263,34 @@ def _get_process_commandline(
     """
     Get (PID, CommandLine) tuples for all instances of a process.
 
-    Uses ``wmic process`` for command-line argument inspection.
+    Uses PowerShell ``Get-CimInstance`` for command-line inspection.
     """
     try:
+        ps_cmd = (
+            f"Get-CimInstance Win32_Process "
+            f"-Filter \"Name='{image_name}'\" "
+            f"| Select-Object ProcessId,CommandLine "
+            f"| ConvertTo-Csv -NoTypeInformation"
+        )
         result = subprocess.run(
-            [
-                "wmic", "process", "where",
-                f"name='{image_name}'",
-                "get", "ProcessId,CommandLine",
-                "/FORMAT:CSV",
-            ],
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
             return []
         entries: list[tuple[int, str]] = []
-        for row in csv.reader(io.StringIO(result.stdout)):
-            # CSV format: Node, CommandLine, ProcessId
-            if len(row) >= 3 and row[2].strip().isdigit():
-                pid = int(row[2].strip())
-                cmdline = row[1].strip()
+        lines = result.stdout.strip().splitlines()
+        # Skip header row ("ProcessId","CommandLine"), parse data
+        for row in csv.reader(lines[1:]):
+            if len(row) >= 2 and row[0].strip().isdigit():
+                pid = int(row[0].strip())
+                cmdline = row[1].strip() if row[1] else ""
                 entries.append((pid, cmdline))
         return entries
     except Exception as exc:
-        log.debug("wmic for %s failed: %s", image_name, exc)
+        log.debug(
+            "PowerShell for %s failed: %s", image_name, exc,
+        )
         return []
 
 
@@ -313,6 +318,7 @@ class TimingMonitor:
         timeout: int = MONITOR_TIMEOUT,
         poll_interval: float = POLL_INTERVAL,
         state: Optional[MonitorState] = None,
+        log_dir: str = "",
     ) -> None:
         self._target_64_bit = target_64_bit
         self._timeout = timeout
@@ -340,6 +346,7 @@ class TimingMonitor:
                 initial_mon_version="",
                 initial_log_mtime=None,
                 initial_install_dir="",
+                log_dir=log_dir,
             )
 
         # Build detector map: timing number -> detector method
@@ -389,6 +396,62 @@ class TimingMonitor:
         """Block until all timings detected or timeout."""
         wait_time = timeout if timeout is not None else self._timeout
         return self._all_detected.wait(timeout=wait_time)
+
+    def wait_for_upgrade_complete(
+        self,
+        timeout: Optional[float] = None,
+        settle_time: float = 15.0,
+    ) -> bool:
+        """
+        Block until the upgrade is functionally complete, then give
+        the monitor extra time to capture remaining timing events.
+
+        Unlike ``wait_for_completion`` (which waits for all 11 timing
+        events), this checks the actual upgrade outcome — service
+        running, process alive, exe present in target install dir —
+        and returns early once those conditions are met.
+
+        :param timeout: Max seconds to wait for upgrade completion.
+        :param settle_time: Extra seconds after upgrade is confirmed
+                            to let the monitor capture late timings.
+        :return: True if upgrade completed, False on timeout.
+        """
+        wait_time = timeout if timeout is not None else self._timeout
+        deadline = time.time() + wait_time
+
+        while time.time() < deadline and not self._stop_event.is_set():
+            if self._all_detected.is_set():
+                log.info("All timings already detected")
+                return True
+
+            svc_info = LocalClient.query_service("stAgentSvc")
+            svc_running = (
+                svc_info.exists and svc_info.state == "RUNNING"
+            )
+            process_running = _is_process_running("stAgentSvc.exe")
+            install_dir = LocalClient.get_install_dir(
+                self._target_64_bit
+            )
+            exe_exists = (install_dir / "stAgentSvc.exe").is_file()
+
+            if svc_running and process_running and exe_exists:
+                log.info(
+                    "Upgrade complete — service running, process "
+                    "alive, exe present. Settling for %.0fs...",
+                    settle_time,
+                )
+                self._all_detected.wait(timeout=settle_time)
+                return True
+
+            log.debug(
+                "Waiting for upgrade complete: svc_running=%s, "
+                "process=%s, exe=%s",
+                svc_running, process_running, exe_exists,
+            )
+            time.sleep(self._poll_interval)
+
+        log.warning("Timed out waiting for upgrade to complete")
+        return False
 
     def print_report(self) -> None:
         """Print formatted timing report to stdout."""

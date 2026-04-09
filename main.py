@@ -16,10 +16,11 @@ import argparse
 import getpass
 import sys
 import logging
+import threading
 from pathlib import Path
 
 from util_config import load_config, save_config, validate_config, ToolConfig
-from util_log import setup_logging
+from util_log import setup_logging, setup_folder_logging
 from util_secret import load_password, save_password, clear_password, cleanup_legacy_file
 from util_webui import WebUIClient
 from util_client import LocalClient
@@ -311,6 +312,12 @@ def cmd_continue(args: argparse.Namespace) -> int:
         print("Error: No monitor state file found. Nothing to continue.")
         return 1
 
+    # Reuse the same log folder from before reboot (feature b)
+    if state.log_dir:
+        log_dir = Path(state.log_dir)
+        setup_folder_logging(log_dir, log_filename="upgrade_continue.log")
+        log.info("Reusing pre-reboot log folder: %s", log_dir)
+
     log.info("Resuming timing monitor from saved state")
     monitor = TimingMonitor(
         target_64_bit=state.target_64_bit,
@@ -319,7 +326,7 @@ def cmd_continue(args: argparse.Namespace) -> int:
         state=state,
     )
     monitor.start()
-    monitor.wait_for_completion(timeout=args.timeout)
+    monitor.wait_for_upgrade_complete(timeout=args.timeout)
     monitor.stop()
     monitor.print_report()
 
@@ -331,6 +338,12 @@ def cmd_continue(args: argparse.Namespace) -> int:
 
 def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
     """Run an upgrade scenario."""
+    from util_input import start_input_monitor
+
+    # ESC key monitor — sets stop_event for graceful shutdown
+    stop_event = threading.Event()
+    start_input_monitor(stop_event)
+
     # Initialize local client (Phase 1 — no nsclient needed)
     client = LocalClient(platform=cfg.client.platform)
 
@@ -351,6 +364,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         target_64_bit=args.target_64_bit,
         reboot_time=args.reboottime,
         reboot_delay=args.rebootdelay,
+        stop_event=stop_event,
     )
 
     # Execute scenario
@@ -379,6 +393,12 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
 
 def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
     """Verify auto-upgrade stays disabled (negative test)."""
+    from util_input import start_input_monitor
+
+    # ESC key monitor — sets stop_event for graceful shutdown
+    stop_event = threading.Event()
+    start_input_monitor(stop_event)
+
     # Initialize local client (Phase 1 — no nsclient needed)
     client = LocalClient(platform=cfg.client.platform)
 
@@ -392,6 +412,7 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace) -> int:
         upgrade_cfg=cfg.upgrade,
         config_name=cfg.tenant.config_name,
         source_64_bit=args.source_64_bit,
+        stop_event=stop_event,
     )
 
     result = runner.run_upgrade_disabled(
@@ -475,16 +496,20 @@ def main() -> int:
         return cmd_setup(cfg)
 
     if args.command == "continue":
-        setup_logging(verbose=args.verbose)
+        setup_logging(verbose=args.verbose, file_logging=False)
         return cmd_continue(args)
 
-    # Auto-detect tenant and config name from local NSClient
+    # Auto-detect tenant from local NSClient (if installed).
+    # config_name is NOT detected here for upgrade/disable-upgrade —
+    # the runner resolves it after install + nsdiag -u sync, because
+    # on a fresh machine nsconfig.json doesn't exist yet.
     ns_info = LocalClient.detect_tenant_from_nsconfig()
     if ns_info:
         if not cfg.tenant.hostname:
             cfg.tenant.hostname = ns_info.tenant_hostname
             print(f"  Auto-detected tenant: {ns_info.tenant_hostname}")
-        if not cfg.tenant.config_name and ns_info.config_name:
+        skip_config_name = args.command in ("upgrade", "disable-upgrade")
+        if not skip_config_name and not cfg.tenant.config_name and ns_info.config_name:
             cfg.tenant.config_name = ns_info.config_name
             print(f"  Auto-detected config: {ns_info.config_name}")
 
@@ -504,8 +529,10 @@ def main() -> int:
                 f"Password for {cfg.tenant.username}@{cfg.tenant.hostname}"
             )
 
-    # Now start logging
-    setup_logging(verbose=args.verbose)
+    # Now start logging — upgrade commands use two-phase logging
+    # (console only here, file handler added later in the log folder)
+    needs_folder_logging = args.command in ("upgrade", "disable-upgrade")
+    setup_logging(verbose=args.verbose, file_logging=not needs_folder_logging)
 
     # Validate config
     errors = validate_config(cfg, require_tenant=require_tenant)

@@ -1,6 +1,6 @@
 """
 Unit tests for util_monitor.py — upgrade timing monitor.
-All subprocess calls (tasklist, wmic, sc, schtasks, shutdown) are mocked.
+All subprocess calls (tasklist, PowerShell, sc, schtasks, shutdown) are mocked.
 """
 
 import json
@@ -151,8 +151,8 @@ class TestProcessHelpers:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
-                "Node,CommandLine,ProcessId\r\n"
-                'DESKTOP,"stAgentSvcMon.exe -monitor",5678\r\n'
+                '"ProcessId","CommandLine"\r\n'
+                '"5678","stAgentSvcMon.exe -monitor"\r\n'
             ),
         )
         entries = _get_process_commandline("stAgentSvcMon.exe")
@@ -163,7 +163,7 @@ class TestProcessHelpers:
     def test_get_process_commandline_empty(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout="Node,CommandLine,ProcessId\r\n",
+            stdout='"ProcessId","CommandLine"\r\n',
         )
         assert _get_process_commandline("stAgentSvcMon.exe") == []
 

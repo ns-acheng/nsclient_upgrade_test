@@ -7,12 +7,15 @@ imported without nsclient installed (e.g. during testing or --help).
 """
 
 import ctypes
+import glob
 import json
 import logging
+import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -784,4 +787,133 @@ class LocalClient:
             display_version="",
             install_location="",
         )
+
+    # ── Crash Dump Detection & Log Bundle ──────────────────────────────
+
+    # Paths where Netskope Client may write crash dump files
+    DUMP_GLOB_PATTERNS: list[str] = [
+        r"C:\dump\stAgentSvc.exe\*.dmp",
+        r"C:\ProgramData\netskope\stagent\logs\*.dmp",
+    ]
+
+    @staticmethod
+    def _get_dump_patterns() -> list[str]:
+        """Return all glob patterns for crash dump locations."""
+        import os
+
+        patterns = list(LocalClient.DUMP_GLOB_PATTERNS)
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            patterns.append(
+                str(Path(appdata) / r"Netskope\stagent\Logs\*.dmp")
+            )
+        return patterns
+
+    @staticmethod
+    def check_crash_dumps() -> tuple[bool, int]:
+        """
+        Check well-known paths for crash dump files.
+
+        Zero-byte dumps are cleaned up automatically.
+
+        :return: (crash_found, zero_byte_count) — ``crash_found`` is
+                 True if at least one non-empty ``.dmp`` file exists.
+        """
+        import os
+
+        found = False
+        zero_count = 0
+        for pattern in LocalClient._get_dump_patterns():
+            for f in glob.glob(pattern):
+                try:
+                    size = os.path.getsize(f)
+                    if size == 0:
+                        try:
+                            os.remove(f)
+                            zero_count += 1
+                        except OSError:
+                            pass
+                        continue
+                    log.error("CRASH DUMP DETECTED: %s (Size: %d)", f, size)
+                    found = True
+                except Exception as exc:
+                    log.error("Error checking dump file %s: %s", f, exc)
+        return found, zero_count
+
+    @staticmethod
+    def collect_log_bundle(
+        is_64_bit: bool,
+        output_dir: Path,
+    ) -> Optional[Path]:
+        """
+        Collect a client log bundle using ``nsdiag.exe -o``.
+
+        Tries the 64-bit path first, falls back to 32-bit.
+
+        :param is_64_bit: Preferred bitness for nsdiag.
+        :param output_dir: Directory to write the zip bundle into.
+        :return: Path to the created zip, or None on failure.
+        """
+        # Try preferred path first, then fallback
+        paths_to_try = (
+            [LocalClient.NSDIAG_PATH_64, LocalClient.NSDIAG_PATH_32]
+            if is_64_bit
+            else [LocalClient.NSDIAG_PATH_32, LocalClient.NSDIAG_PATH_64]
+        )
+        nsdiag: Optional[Path] = None
+        for p in paths_to_try:
+            if p.is_file():
+                nsdiag = p
+                break
+        if nsdiag is None:
+            log.warning("nsdiag.exe not found — cannot collect log bundle")
+            return None
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = output_dir / f"{timestamp}_log_bundle.zip"
+
+        log.info("Collecting log bundle: %s -o %s", nsdiag, output_file)
+        try:
+            result = subprocess.run(
+                [str(nsdiag), "-o", str(output_file)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                log.warning(
+                    "nsdiag log collection failed (exit %d): %s",
+                    result.returncode, result.stderr,
+                )
+                return None
+            log.info("Log bundle created: %s", output_file)
+            return output_file
+        except Exception as exc:
+            log.warning("nsdiag log collection failed: %s", exc)
+            return None
+
+    @staticmethod
+    def handle_crash(is_64_bit: bool, log_dir: Path) -> None:
+        """
+        Handle a detected crash: collect log bundle and copy dump
+        files into the log directory.
+
+        :param is_64_bit: Preferred bitness for nsdiag.
+        :param log_dir: Directory to store collected artifacts.
+        """
+        try:
+            log.info("Handling crash: collecting logs and dumps...")
+            LocalClient.collect_log_bundle(is_64_bit, log_dir)
+
+            for pattern in LocalClient._get_dump_patterns():
+                for f in glob.glob(pattern):
+                    import os
+
+                    if os.path.exists(f) and os.path.getsize(f) > 0:
+                        try:
+                            shutil.copy2(f, str(log_dir))
+                            log.info("Copied dump file %s to %s", f, log_dir)
+                        except Exception as exc:
+                            log.error("Failed to copy dump %s: %s", f, exc)
+        except Exception as exc:
+            log.error("Error during crash handling: %s", exc)
 

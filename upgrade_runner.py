@@ -8,6 +8,7 @@ import logging
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ from util_client import (
     ExeValidationResult, UninstallEntryResult,
 )
 from util_config import UpgradeConfig
+from util_log import LOG_DIR, build_log_dir_name, setup_folder_logging
 from util_webui import WebUIClient
 
 BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
@@ -53,6 +55,7 @@ class PollResult:
     changed: bool
     final_version: str
     elapsed_seconds: float
+    crash_detected: bool = False
 
 
 class UpgradeRunner:
@@ -75,6 +78,7 @@ class UpgradeRunner:
         target_64_bit: bool = False,
         reboot_time: Optional[int] = None,
         reboot_delay: int = 5,
+        stop_event: Optional[threading.Event] = None,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -91,6 +95,7 @@ class UpgradeRunner:
         :param target_64_bit: Whether the upgrade target is 64-bit.
         :param reboot_time: Timing number (1-11) that triggers a reboot.
         :param reboot_delay: Seconds before reboot after timing fires.
+        :param stop_event: Threading event for graceful shutdown (ESC key).
         """
         self.webui = webui
         self.client = client
@@ -102,8 +107,10 @@ class UpgradeRunner:
         self.target_64_bit = target_64_bit
         self.reboot_time = reboot_time
         self.reboot_delay = reboot_delay
+        self.stop_event = stop_event or threading.Event()
         self._cloned_installer: Optional[Path] = None
         self._upgrade_enabled = False
+        self._log_dir: Optional[Path] = None
 
     # ── Upgrade Scenarios ────────────────────────────────────────────
 
@@ -152,6 +159,9 @@ class UpgradeRunner:
             )
             log.info("Target latest version: %s", expected)
 
+            # Create scenario log folder now that versions are known
+            self._create_log_dir(version_before, expected)
+
             # Trigger upgrade via WebUI
             self.webui.disable_auto_upgrade(search_config=self.config_name)
             self.webui.set_update_win64bit(
@@ -166,7 +176,7 @@ class UpgradeRunner:
             # Start timing monitor (background thread)
             monitor = self._start_monitor()
 
-            # Poll for upgrade
+            # Poll for upgrade (also checks crash dumps & stop_event)
             poll = self._wait_for_upgrade(expected_version=expected)
             version_after = poll.final_version
 
@@ -182,18 +192,23 @@ class UpgradeRunner:
 
             elapsed = time.time() - start_time
             version_ok = version_after == expected
-            success = version_ok and service_running and validation_ok
+            success = (
+                version_ok and service_running
+                and validation_ok and not poll.crash_detected
+            )
             message = (
                 f"Upgrade successful: {version_before} -> {version_after}"
                 if version_ok
                 else f"Upgrade FAILED: expected {expected}, got {version_after}"
             )
+            if poll.crash_detected:
+                message += " — CRASH DUMP DETECTED"
             message += self._format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
             )
             log.info(message)
 
-            return UpgradeResult(
+            result = UpgradeResult(
                 success=success,
                 scenario=scenario,
                 version_before=version_before,
@@ -206,10 +221,14 @@ class UpgradeRunner:
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
             )
+            if not result.success:
+                self._collect_failure_logs()
+            return result
 
         except Exception as exc:
             elapsed = time.time() - start_time
             log.exception("Scenario %s failed with exception", scenario)
+            self._collect_failure_logs()
             return UpgradeResult(
                 success=False,
                 scenario=scenario,
@@ -288,6 +307,9 @@ class UpgradeRunner:
             expected = self._apply_64bit_suffix(expected)
             log.info("Expected version after upgrade: %s", expected)
 
+            # Create scenario log folder now that versions are known
+            self._create_log_dir(version_before, expected)
+
             # Trigger golden upgrade via WebUI
             self.webui.disable_auto_upgrade(search_config=self.config_name)
             self.webui.set_update_win64bit(
@@ -304,7 +326,7 @@ class UpgradeRunner:
             # Start timing monitor (background thread)
             monitor = self._start_monitor()
 
-            # Poll for upgrade
+            # Poll for upgrade (also checks crash dumps & stop_event)
             poll = self._wait_for_upgrade(expected_version=expected)
             version_after = poll.final_version
 
@@ -320,18 +342,23 @@ class UpgradeRunner:
 
             elapsed = time.time() - start_time
             version_ok = version_after == expected
-            success = version_ok and service_running and validation_ok
+            success = (
+                version_ok and service_running
+                and validation_ok and not poll.crash_detected
+            )
             message = (
                 f"Golden upgrade successful: {version_before} -> {version_after}"
                 if version_ok
                 else f"Golden upgrade FAILED: expected {expected}, got {version_after}"
             )
+            if poll.crash_detected:
+                message += " — CRASH DUMP DETECTED"
             message += self._format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
             )
             log.info(message)
 
-            return UpgradeResult(
+            result = UpgradeResult(
                 success=success,
                 scenario=scenario,
                 version_before=version_before,
@@ -344,10 +371,14 @@ class UpgradeRunner:
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
             )
+            if not result.success:
+                self._collect_failure_logs()
+            return result
 
         except Exception as exc:
             elapsed = time.time() - start_time
             log.exception("Scenario %s failed with exception", scenario)
+            self._collect_failure_logs()
             return UpgradeResult(
                 success=False,
                 scenario=scenario,
@@ -400,6 +431,9 @@ class UpgradeRunner:
             version_before = self._get_current_version()
             log.info("Version before: %s", version_before)
 
+            # Create scenario log folder
+            self._create_log_dir(version_before, "disabled")
+
             # Disable auto-upgrade and verify it stays
             self.webui.disable_auto_upgrade(search_config=self.config_name)
             if nsclient_ok:
@@ -429,7 +463,10 @@ class UpgradeRunner:
 
             elapsed = time.time() - start_time
             version_ok = version_before == version_after
-            success = version_ok and service_running and validation_ok
+            success = (
+                version_ok and service_running
+                and validation_ok and not poll.crash_detected
+            )
             message = (
                 f"Correctly stayed at {version_before} — auto-upgrade disabled works"
                 if version_ok
@@ -437,12 +474,14 @@ class UpgradeRunner:
                     f"UNEXPECTED upgrade occurred: {version_before} -> {version_after}"
                 )
             )
+            if poll.crash_detected:
+                message += " — CRASH DUMP DETECTED"
             message += self._format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
             )
             log.info(message)
 
-            return UpgradeResult(
+            result = UpgradeResult(
                 success=success,
                 scenario=scenario,
                 version_before=version_before,
@@ -455,10 +494,14 @@ class UpgradeRunner:
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
             )
+            if not result.success:
+                self._collect_failure_logs()
+            return result
 
         except Exception as exc:
             elapsed = time.time() - start_time
             log.exception("Scenario %s failed with exception", scenario)
+            self._collect_failure_logs()
             return UpgradeResult(
                 success=False,
                 scenario=scenario,
@@ -485,6 +528,7 @@ class UpgradeRunner:
             target_64_bit=self.target_64_bit,
             reboot_time=self.reboot_time,
             reboot_delay=self.reboot_delay,
+            log_dir=str(self._log_dir) if self._log_dir else "",
         )
         monitor.start()
         return monitor
@@ -531,11 +575,15 @@ class UpgradeRunner:
         base_installer = self._find_base_installer(base_filename)
 
         # Step 2: Read MSI subject to get base version
+        # The Subject field may include a product name prefix
+        # (e.g. "Netskope Client 135.0.0.2631") — strip it to get
+        # the bare version for comparison with registry DisplayVersion.
         msi_version = ""
         if base_installer:
-            msi_version = self.client.get_msi_subject(base_installer)
-            if msi_version:
-                log.info("Base MSI version (subject): %s", msi_version)
+            raw_subject = self.client.get_msi_subject(base_installer)
+            if raw_subject:
+                msi_version = raw_subject.rsplit(" ", 1)[-1] if " " in raw_subject else raw_subject
+                log.info("Base MSI version (subject): %s (raw: %s)", msi_version, raw_subject)
 
         # Step 3: Check current installation state
         uninstall_info = self.client.check_uninstall_registry()
@@ -820,6 +868,9 @@ class UpgradeRunner:
         """
         Poll the local client version until it changes (or matches expected).
 
+        Also monitors for crash dumps and the stop_event (ESC key) each
+        polling cycle.
+
         :param expected_version: Specific version to wait for. If None,
                                  detects any version change.
         :param timeout_override: Override max wait time in seconds.
@@ -830,7 +881,8 @@ class UpgradeRunner:
         initial_version = self._get_current_version()
 
         log.info(
-            "Polling for upgrade — current: %s, expected: %s, timeout: %ds, interval: %ds",
+            "Polling for upgrade — current: %s, expected: %s, "
+            "timeout: %ds, interval: %ds",
             initial_version,
             expected_version or "(any change)",
             timeout,
@@ -841,8 +893,31 @@ class UpgradeRunner:
         start = time.time()
 
         while elapsed < timeout:
-            time.sleep(interval)
+            # Use stop_event.wait() instead of time.sleep() for
+            # responsive ESC-key cancellation
+            if self.stop_event.wait(timeout=interval):
+                log.warning("Stop event detected — aborting upgrade wait")
+                break
+
             elapsed = time.time() - start
+
+            # Check for crash dumps each cycle
+            crash_found, zero_count = LocalClient.check_crash_dumps()
+            if zero_count > 0:
+                log.info("Cleaned %d zero-byte dump files", zero_count)
+            if crash_found:
+                log.error("Crash dump detected during upgrade polling!")
+                effective_64 = self.target_64_bit or self.source_64_bit
+                log_dir = self._log_dir or LOG_DIR
+                LocalClient.handle_crash(effective_64, log_dir)
+                final = self._get_current_version()
+                return PollResult(
+                    changed=(final != initial_version),
+                    final_version=final,
+                    elapsed_seconds=elapsed,
+                    crash_detected=True,
+                )
+
             current = self._get_current_version()
 
             if expected_version and current == expected_version:
@@ -850,14 +925,20 @@ class UpgradeRunner:
                     "Version matched expected %s after %.0fs",
                     expected_version, elapsed,
                 )
-                return PollResult(changed=True, final_version=current, elapsed_seconds=elapsed)
+                return PollResult(
+                    changed=True, final_version=current,
+                    elapsed_seconds=elapsed,
+                )
 
             if expected_version is None and current != initial_version:
                 log.info(
                     "Version changed from %s to %s after %.0fs",
                     initial_version, current, elapsed,
                 )
-                return PollResult(changed=True, final_version=current, elapsed_seconds=elapsed)
+                return PollResult(
+                    changed=True, final_version=current,
+                    elapsed_seconds=elapsed,
+                )
 
             log.debug(
                 "Poll: version=%s, elapsed=%.0fs/%ds",
@@ -869,7 +950,10 @@ class UpgradeRunner:
             "Polling timed out after %ds — final version: %s",
             timeout, final,
         )
-        return PollResult(changed=(final != initial_version), final_version=final, elapsed_seconds=elapsed)
+        return PollResult(
+            changed=(final != initial_version),
+            final_version=final, elapsed_seconds=elapsed,
+        )
 
     def _init_nsclient(self) -> bool:
         """
@@ -900,12 +984,21 @@ class UpgradeRunner:
 
     def _get_current_version(self) -> str:
         """
-        Get the current client version via nsclient or WebUI fallback.
+        Get the current client version via nsclient, local exe, or WebUI.
 
-        :return: Version string, or 'unknown' if both methods fail.
+        Tries in order:
+        1. nsclient library (if initialized)
+        2. Local stAgentSvc.exe ProductVersion (always available)
+        3. WebUI device version API (may be stale)
+
+        :return: Version string, or 'unknown' if all methods fail.
         """
         if self.client.is_initialized:
             return self.client.get_version()
+        # Try local exe version — more reliable than WebUI
+        local_ver = self._get_local_exe_version()
+        if local_ver:
+            return local_ver
         try:
             return self.webui.get_device_version(
                 host_name=self.host_name, email=self.email,
@@ -913,6 +1006,24 @@ class UpgradeRunner:
         except Exception as exc:
             log.warning("Failed to get version from WebUI: %s", exc)
             return "unknown"
+
+    def _get_local_exe_version(self) -> str:
+        """
+        Read the installed client version from the local stAgentSvc.exe.
+
+        Checks both 64-bit and 32-bit install directories.
+
+        :return: Version string (with ' (64-bit)' suffix if from 64-bit
+                 path), or empty string if exe not found.
+        """
+        for is_64, suffix in [(True, " (64-bit)"), (False, "")]:
+            install_dir = LocalClient.get_install_dir(is_64)
+            exe = install_dir / "stAgentSvc.exe"
+            if exe.is_file():
+                ver = LocalClient.get_file_version(exe)
+                if ver:
+                    return f"{ver}{suffix}" if suffix else ver
+        return ""
 
     def _verify_service_running(self) -> bool:
         """
@@ -1052,6 +1163,43 @@ class UpgradeRunner:
                 "Could not detect config_name after sync — "
                 "API calls will target the default config"
             )
+
+    # ── Log folder & failure collection ────────────────────────────────
+
+    def _create_log_dir(
+        self, from_version: str, to_version: str,
+    ) -> Path:
+        """
+        Create the scenario log folder and redirect file logging there.
+
+        Called after version_before and expected version are known.
+
+        :param from_version: Installed (source) version string.
+        :param to_version: Target upgrade version string.
+        :return: Path to the created log folder.
+        """
+        dir_name = build_log_dir_name(
+            from_version=from_version,
+            to_version=to_version,
+            target_64_bit=self.target_64_bit,
+            reboot_time=self.reboot_time,
+        )
+        self._log_dir = LOG_DIR / dir_name
+        setup_folder_logging(self._log_dir)
+        log.info("Log folder: %s", self._log_dir)
+        return self._log_dir
+
+    def _collect_failure_logs(self) -> None:
+        """Collect nsdiag log bundle when the final result is failure."""
+        log_dir = self._log_dir or LOG_DIR
+        effective_64 = self.target_64_bit or self.source_64_bit
+        log.info("Collecting log bundle for failure analysis...")
+        LocalClient.collect_log_bundle(effective_64, log_dir)
+
+    @property
+    def log_dir(self) -> Optional[Path]:
+        """Return the scenario log directory, if created."""
+        return self._log_dir
 
     def _cleanup(self) -> None:
         """Reset tenant config and remove cloned installer."""

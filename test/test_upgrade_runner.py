@@ -97,6 +97,16 @@ def no_local_installer(tmp_path: Path) -> Any:
         yield
 
 
+@pytest.fixture(autouse=True)
+def no_real_io() -> Any:
+    """Mock static methods and functions that hit real filesystem/subprocesses."""
+    with patch("upgrade_runner.LocalClient.check_crash_dumps", return_value=(False, 0)), \
+         patch("upgrade_runner.LocalClient.collect_log_bundle", return_value=None), \
+         patch("upgrade_runner.LocalClient.handle_crash", return_value=None), \
+         patch("upgrade_runner.setup_folder_logging", return_value=Path("fake.log")):
+        yield
+
+
 @pytest.fixture
 def runner(mock_webui: MagicMock, mock_client: MagicMock, fast_cfg: UpgradeConfig) -> UpgradeRunner:
     """Create an UpgradeRunner with mocked dependencies."""
@@ -1376,11 +1386,12 @@ class TestTimingMonitorIntegration:
         )
         runner.run_upgrade_to_latest()
 
-        MockMonitor.assert_called_once_with(
-            target_64_bit=False,
-            reboot_time=5,
-            reboot_delay=10,
-        )
+        MockMonitor.assert_called_once()
+        call_kwargs = MockMonitor.call_args[1]
+        assert call_kwargs["target_64_bit"] is False
+        assert call_kwargs["reboot_time"] == 5
+        assert call_kwargs["reboot_delay"] == 10
+        assert "log_dir" in call_kwargs
         mock_monitor_instance.start.assert_called_once()
         mock_monitor_instance.stop.assert_called_once()
         mock_monitor_instance.print_report.assert_called_once()
