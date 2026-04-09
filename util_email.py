@@ -132,6 +132,127 @@ class GmailBrowser:
                 "Close all Chrome windows and retry."
             ) from exc
 
+    def mark_all_as_read(self) -> int:
+        """
+        Mark all unread emails matching the invite subject as read.
+
+        Searches for ``is:unread subject:("...")``, selects all results,
+        and clicks the "Mark as read" toolbar button.  This clears stale
+        unread emails so that only freshly sent invites appear in
+        subsequent :meth:`get_download_link` calls.
+
+        :return: Number of emails that were marked as read (0 if none).
+        :raises RuntimeError: If the browser is not connected.
+        """
+        if self._driver is None:
+            raise RuntimeError("Not connected — call connect() first")
+
+        from selenium.common.exceptions import TimeoutException
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.common.keys import Keys
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        driver = self._driver
+        subject = SUBJECT_TEMPLATE.format(email=self._email_address)
+
+        if "mail.google.com" not in (driver.current_url or ""):
+            log.info("Navigating to Gmail")
+            driver.get(GMAIL_URL)
+
+        self._dismiss_overlays(driver, By)
+
+        try:
+            search_box = WebDriverWait(driver, 30).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR,
+                     'input[aria-label="Search mail"]')
+                )
+            )
+        except TimeoutException:
+            search_box = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, 'input[name="q"]')
+                )
+            )
+
+        search_query = f'is:unread subject:("{subject}")'
+        log.info("Marking old unread emails as read: %s", search_query)
+        search_box.clear()
+        search_box.send_keys(search_query)
+        search_box.send_keys(Keys.RETURN)
+
+        # Wait for results
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "tr.zA")
+                )
+            )
+            count: int = driver.execute_script(
+                "return document.querySelectorAll("
+                "'tr.zA, tr.zE').length;"
+            )
+        except TimeoutException:
+            log.info("No unread emails to mark as read")
+            return 0
+
+        if count == 0:
+            log.info("No unread emails to mark as read")
+            return 0
+
+        # Click the "Select all" checkbox in the toolbar
+        try:
+            select_all = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR,
+                     'div[role="toolbar"] '
+                     'span[role="checkbox"],'
+                     ' div[gh="mtb"] '
+                     'span[role="checkbox"]')
+                )
+            )
+            select_all.click()
+            time.sleep(0.5)
+        except TimeoutException:
+            log.warning(
+                "Could not find select-all checkbox "
+                "— skipping mark as read"
+            )
+            return 0
+
+        # Click "Mark as read" button (open-envelope icon)
+        try:
+            mark_read = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR,
+                     'div[act="1"] button[aria-label],'
+                     ' div[role="toolbar"] '
+                     'button[aria-label="Mark as read"]')
+                )
+            )
+            mark_read.click()
+            time.sleep(1)
+            log.info(
+                "Marked %d unread email(s) as read", count,
+            )
+        except TimeoutException:
+            # Fallback: use keyboard shortcut Shift+I
+            from selenium.webdriver.common.action_chains import (
+                ActionChains,
+            )
+            ActionChains(driver).key_down(
+                Keys.SHIFT
+            ).send_keys("i").key_up(Keys.SHIFT).perform()
+            time.sleep(1)
+            log.info(
+                "Marked %d unread email(s) as read "
+                "(via keyboard shortcut)",
+                count,
+            )
+
+        return count
+
     def count_matching_emails(self) -> int:
         """
         Count how many emails currently match the invite subject.
@@ -195,23 +316,19 @@ class GmailBrowser:
     def get_download_link(
         self,
         timeout: int = DEFAULT_TIMEOUT,
-        skip_count: int = 0,
-        exclude_urls: Optional[list[str]] = None,
         max_rows: Optional[int] = None,
     ) -> str:
         """
-        Navigate Gmail, find the invite email, and return the download URL.
+        Search for unread invite emails and return the download URL.
 
-        Retries if the email has not arrived yet (up to *timeout* seconds).
+        Uses ``is:unread`` filter so that emails opened in previous
+        calls are automatically skipped (Gmail marks opened emails
+        as read).  Retries until *timeout* seconds have elapsed.
 
         :param timeout: Max seconds to wait for the email to appear.
-        :param skip_count: Number of old emails to ignore (newest-first).
-            Pass the value returned by :meth:`count_matching_emails`.
-        :param exclude_urls: URLs to skip (already tried and failed).
-        :param max_rows: Maximum number of email rows to check per pass.
-            Defaults to None (check all new rows).
+        :param max_rows: Maximum email rows to check per search pass.
         :return: Download URL string.
-        :raises TimeoutError: If the email or link is not found in time.
+        :raises TimeoutError: If no usable link is found in time.
         :raises RuntimeError: If the browser is not connected.
         """
         if self._driver is None:
@@ -260,8 +377,8 @@ class GmailBrowser:
                     )
                 )
 
-            # Step 3: Search for the email
-            search_query = f'subject:("{subject}")'
+            # Step 3: Search for unread emails matching the subject
+            search_query = f'is:unread subject:("{subject}")'
             log.info("Searching Gmail: %s", search_query)
             search_box.clear()
             search_box.send_keys(search_query)
@@ -275,47 +392,40 @@ class GmailBrowser:
                     )
                 )
                 row_count = int(driver.execute_script(
-                    "return document.querySelectorAll('tr.zA, tr.zE').length;"
+                    "return document.querySelectorAll("
+                    "'tr.zA, tr.zE').length;"
                 ))
             except TimeoutException:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
-                        f"Email not found within {timeout}s: {subject}"
+                        f"No unread email found within "
+                        f"{timeout}s: {subject}"
                     )
                 log.info(
-                    "Email not found yet — retrying in %ds",
+                    "No unread email yet — retrying in %ds",
                     SEARCH_RETRY_INTERVAL,
                 )
                 time.sleep(SEARCH_RETRY_INTERVAL)
                 continue
 
-            # Gmail shows newest first — only check new rows
-            new_count = row_count - skip_count
-            if new_count <= 0:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"No new email arrived within {timeout}s: {subject}"
-                    )
-                log.info(
-                    "No new email yet (%d old) — retrying in %ds",
-                    skip_count, SEARCH_RETRY_INTERVAL,
-                )
-                time.sleep(SEARCH_RETRY_INTERVAL)
-                continue
-
-            # Step 5: Iterate only new rows (indices 0..new_count-1)
-            check_count = new_count
+            # Step 5: Iterate unread rows (newest first).
+            # Opening an email marks it as read, so the next
+            # is:unread search will skip it automatically.
+            check_count = row_count
             if max_rows is not None:
-                check_count = min(new_count, max_rows)
+                check_count = min(row_count, max_rows)
             log.info(
-                "%d new email(s) found (%d total, %d skipped, checking %d)",
-                new_count, row_count, skip_count, check_count,
+                "%d unread email(s) found (checking %d)",
+                row_count, check_count,
             )
             for row_idx in range(check_count):
                 # Click the row by index (no offsetParent guard —
-                # Gmail rows can report null offsetParent while visible)
+                # Gmail rows can report null offsetParent while
+                # visible)
                 clicked = driver.execute_script(f"""
-                    var rows = document.querySelectorAll('tr.zA, tr.zE');
+                    var rows = document.querySelectorAll(
+                        'tr.zA, tr.zE'
+                    );
                     if ({row_idx} < rows.length) {{
                         rows[{row_idx}].click();
                         return true;
@@ -324,37 +434,37 @@ class GmailBrowser:
                 """)
                 if not clicked:
                     log.info(
-                        "Row %d not present in DOM — skipping", row_idx,
+                        "Row %d not present in DOM — skipping",
+                        row_idx,
                     )
                     continue
-                log.info("Opened email row %d/%d", row_idx + 1, new_count)
+                log.info(
+                    "Opened email row %d/%d (marked as read)",
+                    row_idx + 1, row_count,
+                )
 
                 # Find download link in email body
                 url = self._extract_link_from_body(
                     driver, By, EC, WebDriverWait, link_texts,
                 )
                 if not url:
-                    log.info("No download link in row %d — skipping", row_idx + 1)
-                    driver.back()
-                    time.sleep(1)
-                    continue
-
-                # Check tenant hostname in the link
-                if self._tenant_hostname and self._tenant_hostname not in url:
                     log.info(
-                        "Link tenant mismatch (expected %s, got %s) "
-                        "— skipping row %d",
-                        self._tenant_hostname, url, row_idx + 1,
+                        "No download link in row %d — skipping",
+                        row_idx + 1,
                     )
                     driver.back()
                     time.sleep(1)
                     continue
 
-                # Skip URLs already tried (e.g. 1603 bad token)
-                if exclude_urls and url in exclude_urls:
+                # Check tenant hostname in the link
+                if (
+                    self._tenant_hostname
+                    and self._tenant_hostname not in url
+                ):
                     log.info(
-                        "Skipping already-tried URL — row %d",
-                        row_idx + 1,
+                        "Link tenant mismatch (expected %s, "
+                        "got %s) — skipping row %d",
+                        self._tenant_hostname, url, row_idx + 1,
                     )
                     driver.back()
                     time.sleep(1)
@@ -366,11 +476,13 @@ class GmailBrowser:
             # No matching row found in this pass
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    "No email with matching tenant download link found "
-                    f"within {timeout}s (tenant={self._tenant_hostname})"
+                    "No unread email with matching download "
+                    f"link found within {timeout}s "
+                    f"(tenant={self._tenant_hostname})"
                 )
             log.info(
-                "No matching email found — retrying in %ds",
+                "No matching link in unread emails "
+                "— retrying in %ds",
                 SEARCH_RETRY_INTERVAL,
             )
             time.sleep(SEARCH_RETRY_INTERVAL)

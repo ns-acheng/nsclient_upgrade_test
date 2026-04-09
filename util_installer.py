@@ -49,7 +49,6 @@ class InstallerManager:
         self.log_dir = log_dir
         self._init_nsclient = init_nsclient_fn or (lambda: False)
         self._gmail_browser: Any = None
-        self._gmail_old_count: int = 0
         self._cloned_installer: Optional[Path] = None
 
     # ── Public API ───────────────────────────────────────────────────
@@ -253,9 +252,9 @@ class InstallerManager:
         """
         Send an email invite and auto-extract the download link from Gmail.
 
-        Flow: connect Chrome → count existing emails → send invite →
-        wait for delivery → search only new emails.  If no new email
-        appears in 30 s, falls back to the latest existing match.
+        Uses ``is:unread`` filtering — previously opened emails are
+        automatically skipped since Gmail marks them as read when
+        viewed.
 
         Returns the URL on success, or an empty string on any failure
         (caller falls back to the manual input prompt).
@@ -271,12 +270,7 @@ class InstallerManager:
                 stop_event=self.stop_event,
             )
             self._gmail_browser.connect()
-            old_count = self._gmail_browser.count_matching_emails()
-            self._gmail_old_count = old_count
-            log.info(
-                "Found %d existing email(s) — will skip these",
-                old_count,
-            )
+            self._gmail_browser.mark_all_as_read()
 
             log.info("Sending email invite to %s", invite_email)
             self.webui.send_email_invite(invite_email)
@@ -285,29 +279,10 @@ class InstallerManager:
             log.info("Waiting 1s for invite email to arrive")
             time.sleep(1)
 
-            # Try to find a NEW email for 30 seconds
-            try:
-                url = self._gmail_browser.get_download_link(
-                    skip_count=old_count, timeout=30,
-                )
-                log.info("Auto-extracted download link: %s", url)
-                return url
-            except TimeoutError:
-                if old_count <= 0:
-                    raise
-                log.info(
-                    "No new email in 30s — falling back to "
-                    "latest existing email"
-                )
-
-            # Fallback: grab the latest matched email regardless of age
             url = self._gmail_browser.get_download_link(
-                skip_count=0, timeout=10, max_rows=3,
+                timeout=30, max_rows=3,
             )
-            log.info(
-                "Auto-extracted download link (existing email): %s",
-                url,
-            )
+            log.info("Auto-extracted download link: %s", url)
             return url
         except Exception:
             log.warning(
@@ -342,6 +317,10 @@ class InstallerManager:
         Install via msiexec.  On exit code 1603 (wrong email token),
         re-send the invite to get a fresh token and retry.
 
+        Uses ``is:unread`` filtering — the first email was already
+        opened (and marked as read in Gmail), so the next
+        ``get_download_link`` call only returns newer unread emails.
+
         :param installer: Path to the MSI to install.
         :param base_filename: Base installer name for re-resolving.
         :param initial_url: Download URL used for *installer* (may be
@@ -349,10 +328,6 @@ class InstallerManager:
         :param invite_email: Email address for re-sending the invite
             on 1603 retry.
         """
-        tried_urls: list[str] = []
-        if initial_url:
-            tried_urls.append(initial_url)
-
         try:
             self.client.install_msi(str(installer), log_dir=self.log_dir)
             return
@@ -371,83 +346,47 @@ class InstallerManager:
             self._cloned_installer.unlink()
             self._cloned_installer = None
 
-        # Re-send invite to get a fresh token, re-count baseline
+        # Re-send invite to get a fresh token.
+        # The old email is already marked as read (we opened it
+        # to extract the link), so get_download_link with
+        # is:unread will skip it automatically.
         log.info("Re-sending email invite to %s", invite_email)
         self.webui.send_email_invite(invite_email)
+
+        # Search for the fresh unread email (up to 60s)
+        log.info("Waiting for fresh unread email (up to 60s)")
         try:
-            new_baseline = (
-                self._gmail_browser.count_matching_emails()
+            url = self._gmail_browser.get_download_link(
+                timeout=60, max_rows=3,
             )
-            self._gmail_old_count = new_baseline
-            log.info(
-                "Re-counted %d existing email(s) — waiting for "
-                "fresh email",
-                new_baseline,
-            )
-        except Exception:
-            log.warning(
-                "Failed to re-count emails — using old baseline"
+        except TimeoutError:
+            raise RuntimeError(
+                "Install failed (1603) — no fresh unread email "
+                "arrived within 60s after re-send"
             )
 
-        # Wait up to 60s for the fresh email with the new token
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
-            log.info(
-                "Waiting for fresh email (%.0fs remaining)",
-                remaining,
+        log.info("Found fresh download link: %s", url)
+        name = self._get_installer_name(url)
+        if not name:
+            raise RuntimeError(
+                "Install failed (1603) — could not compose "
+                "installer name from fresh link"
             )
-            try:
-                url = self._gmail_browser.get_download_link(
-                    skip_count=self._gmail_old_count,
-                    timeout=min(15, max(1, int(remaining))),
-                    exclude_urls=tried_urls,
-                )
-            except (TimeoutError, RuntimeError):
-                log.info("No fresh email found yet")
-                continue
 
-            tried_urls.append(url)
-            log.info("Found fresh download link: %s", url)
+        new_installer = resolve_installer(base_filename, name)
+        if not new_installer:
+            raise RuntimeError(
+                "Install failed (1603) — could not resolve "
+                "installer from fresh link"
+            )
+        self._cloned_installer = new_installer
 
-            name = self._get_installer_name(url)
-            if not name:
-                log.warning(
-                    "Could not compose installer name — skipping",
-                )
-                continue
+        # Wait for the tenant to register the new token
+        log.info("Waiting 15s for tenant to accept the token")
+        time.sleep(15)
 
-            new_installer = resolve_installer(base_filename, name)
-            if not new_installer:
-                log.warning("Could not resolve installer — skipping")
-                continue
-            self._cloned_installer = new_installer
-
-            # Wait for the tenant to register the new token
-            log.info("Waiting 15s for tenant to accept the token")
-            time.sleep(15)
-
-            try:
-                self.client.install_msi(
-                    str(new_installer), log_dir=self.log_dir,
-                )
-                return
-            except RuntimeError as retry_exc:
-                if "exit code 1603" not in str(retry_exc):
-                    raise
-                log.warning(
-                    "Retry also failed (1603) — trying next email",
-                )
-                if (
-                    self._cloned_installer
-                    and self._cloned_installer.is_file()
-                ):
-                    self._cloned_installer.unlink()
-                    self._cloned_installer = None
-
-        raise RuntimeError(
-            "Install failed (1603) after 60s of email "
-            "retries — aborting"
+        self.client.install_msi(
+            str(new_installer), log_dir=self.log_dir,
         )
 
     # ── Installer Name Resolution ────────────────────────────────────
