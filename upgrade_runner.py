@@ -192,7 +192,7 @@ class UpgradeRunner:
             # Start monitor before sync loop so it can detect
             # timing 1 (config sync) and timing 2 (MSI download)
             monitor = self._start_monitor()
-            self._sync_until_config_confirmed(monitor)
+            self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -360,7 +360,7 @@ class UpgradeRunner:
             # Start monitor before sync loop so it can detect
             # timing 1 (config sync) and timing 2 (MSI download)
             monitor = self._start_monitor()
-            self._sync_until_config_confirmed(monitor)
+            self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -661,41 +661,60 @@ class UpgradeRunner:
             return f"{version} (64-bit)"
         return version
 
-    def _sync_until_config_confirmed(self, monitor: Any) -> None:
+    def _start_sync_thread(self, monitor: Any) -> None:
         """
-        Re-sync from tenant every 30s until the config update is
-        confirmed in nsconfig.json (timing 1 fires).
+        Launch a background thread that runs ``nsdiag -u`` up to 3 times,
+        with a 30-second gap between attempts.
 
-        The monitor's detector checks ``clientUpdate.allowAutoUpdate``
-        in nsconfig.json every polling cycle.  This method triggers
-        ``nsdiag -u`` repeatedly so the local agent pulls the latest
-        tenant config, and exits once the monitor has detected timing 1.
+        The thread stops early as soon as any timing event fires so the
+        syncs don't continue once the upgrade is already in progress.
+        The main thread returns immediately and proceeds to
+        ``wait_for_upgrade_complete``.
 
         :param monitor: Running TimingMonitor instance.
         """
-        SYNC_INTERVAL = 30   # seconds between re-sync attempts
-        MAX_RETRIES = 20     # 10 minutes total
+        MAX_SYNC_ATTEMPTS = 3
+        SYNC_INTERVAL = 30   # seconds between attempts
 
-        for attempt in range(1, MAX_RETRIES + 1):
-            self._check_stopped()
-            self.client.sync_config_from_tenant(
-                is_64_bit=self.source_64_bit, wait_seconds=0,
-            )
-            # Wait SYNC_INTERVAL; monitor detects timing 1 in background
-            self.stop_event.wait(timeout=SYNC_INTERVAL)
-            if 1 in monitor.get_timings():
-                log.info(
-                    "Config update confirmed in nsconfig.json "
-                    "(attempt %d)", attempt,
+        def _worker() -> None:
+            for attempt in range(1, MAX_SYNC_ATTEMPTS + 1):
+                if self.stop_event.is_set() or monitor.get_timings():
+                    log.info(
+                        "Sync thread stopping early before attempt %d "
+                        "— timings already firing",
+                        attempt,
+                    )
+                    return
+                self.client.sync_config_from_tenant(
+                    is_64_bit=self.source_64_bit, wait_seconds=0,
                 )
-                return
+                log.info(
+                    "Config sync attempt %d/%d complete",
+                    attempt, MAX_SYNC_ATTEMPTS,
+                )
+                if attempt < MAX_SYNC_ATTEMPTS:
+                    # Wait between attempts; abort early if any timing fires
+                    for _ in range(SYNC_INTERVAL):
+                        if self.stop_event.is_set() or monitor.get_timings():
+                            log.info(
+                                "Sync thread stopping — timings firing "
+                                "after attempt %d",
+                                attempt,
+                            )
+                            return
+                        time.sleep(1)
             log.info(
-                "Config sync not yet confirmed — retrying "
-                "(%d/%d)", attempt, MAX_RETRIES,
+                "Config sync thread finished (%d attempts)",
+                MAX_SYNC_ATTEMPTS,
             )
-        log.warning(
-            "Config sync not confirmed after %d retries — "
-            "continuing anyway", MAX_RETRIES,
+
+        thread = threading.Thread(
+            target=_worker, daemon=True, name="sync-config",
+        )
+        thread.start()
+        log.info(
+            "Config sync thread started (up to %d attempts)",
+            MAX_SYNC_ATTEMPTS,
         )
 
     def _sync_and_detect_config(self) -> None:
