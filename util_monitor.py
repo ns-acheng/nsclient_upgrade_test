@@ -507,31 +507,34 @@ class TimingMonitor:
         return False
 
     def print_report(self) -> None:
-        """Print formatted timing report to stdout."""
-        print(f"\n{'=' * 60}")
-        print("  Upgrade Timing Report")
-        print(f"{'=' * 60}")
+        """Print formatted timing report to stdout and log file."""
+        lines: list[str] = []
+        lines.append(f"{'=' * 60}")
+        lines.append("  Upgrade Timing Report")
+        lines.append(f"{'=' * 60}")
         for num in range(1, 12):
             event = TimingEvent(num)
             key = str(num)
             with self._lock:
                 offset = self._state.timings.get(key)
             if offset is not None:
-                print(
+                lines.append(
                     f"  [{offset:7.1f}s] {num:2d}. {event.description}"
                 )
             else:
-                print(
+                lines.append(
                     f"  [    N/A] {num:2d}. {event.description}"
                 )
         with self._lock:
             detected = len(self._state.timings)
             reboot_triggered = self._state.reboot_triggered
             reboot_time = self._state.reboot_time
-        print(f"\n  Detected: {detected}/11 timings")
+        lines.append(f"\n  Detected: {detected}/11 timings")
         if reboot_triggered:
-            print(f"  Reboot triggered at timing {reboot_time}")
-        print()
+            lines.append(f"  Reboot triggered at timing {reboot_time}")
+        report = "\n".join(lines)
+        print(f"\n{report}\n")
+        log.info("Timing report:\n%s", report)
 
     @property
     def state(self) -> MonitorState:

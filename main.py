@@ -513,39 +513,52 @@ def _icon(ok: bool) -> str:
 
 
 def _print_result(result: UpgradeResult) -> None:
-    """Print a formatted upgrade result summary."""
-    print(f"\n{'=' * 60}")
-    print(f"  [{_icon(result.success)}] {result.scenario}")
-    print(f"{'=' * 60}")
-    print(f"  Version before:    {result.version_before}")
-    print(f"  Version after:     {result.version_after}")
-    print(f"  Expected version:  {result.expected_version}")
-    print(f"  WebUI version:     {result.webui_version}")
-    print(f"  Service running:   [{_icon(result.service_running)}]")
-    # Executable validation
+    """Print a formatted upgrade result summary to console and log file."""
+    # Build plain-text report (no ANSI colors) for logging
+    tag = "PASS" if result.success else "FAIL"
+    lines: list[str] = []
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  [{tag}] {result.scenario}")
+    lines.append(f"{'=' * 60}")
+    lines.append(f"  Version before:    {result.version_before}")
+    lines.append(f"  Version after:     {result.version_after}")
+    lines.append(f"  Expected version:  {result.expected_version}")
+    lines.append(f"  WebUI version:     {result.webui_version}")
+    svc_tag = "PASS" if result.service_running else "FAIL"
+    lines.append(f"  Service running:   [{svc_tag}]")
     exe = result.exe_validation
     if exe:
-        print(f"  Executables [{_icon(exe.valid)}]:  dir={exe.install_dir}")
+        exe_tag = "PASS" if exe.valid else "FAIL"
+        lines.append(f"  Executables [{exe_tag}]:  dir={exe.install_dir}")
         if exe.present:
-            print(f"    Present:         {', '.join(exe.present)}")
+            lines.append(f"    Present:         {', '.join(exe.present)}")
         if exe.missing:
-            print(f"    MISSING:         {', '.join(exe.missing)}")
+            lines.append(f"    MISSING:         {', '.join(exe.missing)}")
         if exe.version_mismatches:
             for m in exe.version_mismatches:
-                print(f"    MISMATCH:        {m}")
-    # Uninstall registry entry
+                lines.append(f"    MISMATCH:        {m}")
     unreg = result.uninstall_entry
     if unreg:
-        print(f"  Uninstall entry [{_icon(unreg.found)}]:")
+        unreg_tag = "PASS" if unreg.found else "FAIL"
+        lines.append(f"  Uninstall entry [{unreg_tag}]:")
         if unreg.found:
-            print(f"    Name:            {unreg.display_name}")
-            print(f"    Version:         {unreg.display_version}")
-            print(f"    Location:        {unreg.install_location}")
+            lines.append(f"    Name:            {unreg.display_name}")
+            lines.append(f"    Version:         {unreg.display_version}")
+            lines.append(f"    Location:        {unreg.install_location}")
         else:
-            print(f"    Not found in registry")
-    print(f"  Elapsed:           {result.elapsed_seconds:.1f}s")
-    print(f"  Message:           {result.message}")
-    print()
+            lines.append(f"    Not found in registry")
+    lines.append(f"  Elapsed:           {result.elapsed_seconds:.1f}s")
+    lines.append(f"  Message:           {result.message}")
+    plain_report = "\n".join(lines)
+    log.info("Final report:\n%s", plain_report)
+
+    # Print colored version to console
+    colored_lines: list[str] = []
+    for line in lines:
+        line = line.replace("[PASS]", f"[{_GREEN}PASS{_RESET}]")
+        line = line.replace("[FAIL]", f"[{_RED}FAIL{_RESET}]")
+        colored_lines.append(line)
+    print("\n" + "\n".join(colored_lines) + "\n")
 
 
 def _prompt_password(label: str) -> str:
