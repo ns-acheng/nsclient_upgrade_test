@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 GMAIL_URL = "https://mail.google.com/"
 DEFAULT_DEBUG_PORT = 9222
+PAGE_LOAD_TIMEOUT = 30    # seconds for driver.get() before TimeoutException
 SEARCH_RETRY_INTERVAL = 5  # seconds between retries
 DEFAULT_TIMEOUT = 300  # total seconds to wait for email
 SUBJECT_TEMPLATE = '[EXTERNAL] Netskope New User Onboarding for "{email}"'
@@ -96,6 +97,7 @@ class GmailBrowser:
         if self._is_port_open(self._debug_port):
             try:
                 self._driver = webdriver.Chrome(options=options)
+                self._driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
                 log.info(
                     "Connected to Chrome on port %d",
                     self._debug_port,
@@ -125,6 +127,7 @@ class GmailBrowser:
         # Retry attach after launch
         try:
             self._driver = webdriver.Chrome(options=options)
+            self._driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
             log.info(
                 "Connected to Chrome on port %d", self._debug_port
             )
@@ -308,7 +311,18 @@ class GmailBrowser:
                 return False
 
             # Navigate to inbox to get fresh DOM
-            driver.get(GMAIL_URL)
+            try:
+                driver.get(GMAIL_URL)
+            except TimeoutException:
+                remaining = deadline - time.monotonic()
+                log.warning(
+                    "Gmail page load timed out (%ds) "
+                    "— retrying in %ds (%.0fs left)",
+                    PAGE_LOAD_TIMEOUT,
+                    SEARCH_RETRY_INTERVAL, remaining,
+                )
+                time.sleep(SEARCH_RETRY_INTERVAL)
+                continue
             self._dismiss_overlays(driver, By)
 
             # Wait for inbox rows to load
