@@ -332,21 +332,34 @@ class LocalClient:
         """
         Uninstall the client using ``msiexec /x`` with a product code.
 
+        Retries once after 10 seconds on failure. Raises RuntimeError
+        if both attempts fail.
+
         :param product_code: Registry subkey name (e.g. '{GUID}' or 'NetskopeClient').
+        :raises RuntimeError: If uninstall fails on both attempts.
         """
-        log.info("Uninstalling via msiexec /x %s", product_code)
-        result = subprocess.run(
-            ["msiexec", "/x", product_code, "/qn"],
-            capture_output=True, timeout=300,
-            encoding="utf-8", errors="replace",
-        )
-        if result.returncode != 0:
+        for attempt in range(1, 3):
+            log.info("Uninstalling via msiexec /x %s", product_code)
+            result = subprocess.run(
+                ["msiexec", "/x", product_code, "/qn"],
+                capture_output=True, timeout=300,
+                encoding="utf-8", errors="replace",
+            )
+            if result.returncode == 0:
+                log.info("msiexec /x completed")
+                return
             log.warning(
                 "msiexec /x exit code %d: %s",
                 result.returncode, result.stderr,
             )
-        else:
-            log.info("msiexec /x completed")
+            if attempt == 1:
+                log.info("Retrying uninstall in 10 seconds...")
+                time.sleep(10)
+        raise RuntimeError(
+            f"Uninstall failed after 2 attempts "
+            f"(product_code={product_code}, "
+            f"last exit code={result.returncode})"
+        )
 
     @staticmethod
     def get_msi_subject(msi_path: Path) -> str:

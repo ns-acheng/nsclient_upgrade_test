@@ -167,25 +167,13 @@ class GmailBrowser:
         self._dismiss_overlays(driver, By)
 
         try:
-            search_box = WebDriverWait(driver, 30).until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR,
-                     'input[aria-label="Search mail"]')
-                )
-            )
+            search_box = self._find_search_box(driver, By, EC, WebDriverWait)
         except TimeoutException:
-            try:
-                search_box = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR, 'input[name="q"]')
-                    )
-                )
-            except TimeoutException:
-                log.info(
-                    "Search box not found — inbox may be empty, "
-                    "nothing to mark as read"
-                )
-                return 0
+            log.info(
+                "Search box not found — inbox may be empty, "
+                "nothing to mark as read"
+            )
+            return 0
 
         search_query = (
             f'is:unread subject:("{SEARCH_SUBJECT}") '
@@ -474,18 +462,7 @@ class GmailBrowser:
 
         self._dismiss_overlays(driver, By)
 
-        try:
-            search_box = WebDriverWait(driver, 30).until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, 'input[aria-label="Search mail"]')
-                )
-            )
-        except TimeoutException:
-            search_box = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, 'input[name="q"]')
-                )
-            )
+        search_box = self._find_search_box(driver, By, EC, WebDriverWait)
 
         search_query = (
             f'subject:("{SEARCH_SUBJECT}") '
@@ -557,20 +534,9 @@ class GmailBrowser:
 
             # Step 2: Wait for search input
             log.info("Waiting for Gmail search input")
-            try:
-                search_box = WebDriverWait(driver, 30).until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR,
-                         'input[aria-label="Search mail"]')
-                    )
-                )
-            except TimeoutException:
-                # Fallback selector
-                search_box = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR, 'input[name="q"]')
-                    )
-                )
+            search_box = self._find_search_box(
+                driver, By, EC, WebDriverWait,
+            )
 
             # Step 3: Search for unread emails matching the subject
             search_query = (
@@ -825,6 +791,38 @@ class GmailBrowser:
                     pass
 
     # -- helpers --------------------------------------------------------
+
+    @staticmethod
+    def _find_search_box(
+        driver: Any, By: Any, EC: Any, WebDriverWait: Any,
+        timeout: int = 30,
+    ) -> Any:
+        """
+        Locate the Gmail search input.
+
+        Uses XPath combining both ``name`` and ``aria-label`` attributes
+        for a precise match.  Falls back to ``name="q"`` alone if the
+        combined selector times out.
+
+        :param timeout: Seconds to wait for the primary selector.
+        :return: The search box WebElement.
+        :raises TimeoutException: If neither selector finds the element.
+        """
+        from selenium.common.exceptions import TimeoutException
+
+        try:
+            return WebDriverWait(driver, timeout).until(
+                EC.visibility_of_element_located((
+                    By.XPATH,
+                    '//input[@name="q" and @aria-label="Search mail"]',
+                ))
+            )
+        except TimeoutException:
+            return WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((
+                    By.CSS_SELECTOR, 'input[name="q"]',
+                ))
+            )
 
     @staticmethod
     def _is_port_open(port: int, timeout: float = 2.0) -> bool:
