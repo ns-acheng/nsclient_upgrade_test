@@ -55,7 +55,7 @@ data/.passwords.enc
 data/base_version/
 
 # Chrome local profile for email automation
-local_profile/
+local_profile*/
 
 # Local environment/config overrides
 .env

@@ -1,12 +1,16 @@
 {
     "tenant": {
         "hostname": "exploratory2.stg.boomskope.com",
-        "username": "acheng@netskope.com"
+        "username": "acheng@netskope.com",
+        "config_name": ""
     },
     "client": {
         "platform": "windows",
         "email_suffix": "",
-        "email_profiles": {}
+        "email_profiles": {
+            "acheng@netskope.com": "local_profile",
+            "acheng.test.test@gmail.com": "local_profile2"
+        }
     },
     "upgrade": {
         "poll_interval_seconds": 30,
