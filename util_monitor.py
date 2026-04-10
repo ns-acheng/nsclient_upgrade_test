@@ -35,24 +35,32 @@ NS_INSTALLATION_LOG = Path(
 )
 POLL_INTERVAL = 1.5   # seconds between detector sweeps
 MONITOR_TIMEOUT = 600  # 10 minutes total monitoring time
+NS_MSI_DOWNLOAD_PATH = Path(
+    r"C:\ProgramData\netskope\stagent\download\STAgent.msi"
+)
+MSI_MIN_SIZE = 25 * 1024 * 1024  # 25 MB threshold
+
+TOTAL_TIMINGS = 13
 
 
 # ── Timing events enum ──────────────────────────────────────────────
 
 class TimingEvent(IntEnum):
-    """The 11 upgrade lifecycle events to monitor."""
+    """The 13 upgrade lifecycle events to monitor."""
 
-    MONITOR_PROCESS_STARTS = 1
-    INSTALLATION_LOG_UPDATED = 2
-    UI_PROCESS_GONE = 3
-    SERVICE_STOP_PENDING = 4
-    SVC_PROCESS_GONE = 5
-    DRIVER_STOPPED = 6
-    SERVICE_STOPPED = 7
-    SERVICE_GONE = 8
-    NEW_EXE_IN_DIR = 9
-    SVC_RUNNING_NEW_PID = 10
-    MONITOR_STOPPED_UPGRADED = 11
+    CONFIG_SYNC_ALLOW_UPDATE = 1
+    MSI_DOWNLOADED = 2
+    MONITOR_PROCESS_STARTS = 3
+    INSTALLATION_LOG_UPDATED = 4
+    UI_PROCESS_GONE = 5
+    SERVICE_STOP_PENDING = 6
+    SVC_PROCESS_GONE = 7
+    DRIVER_STOPPED = 8
+    SERVICE_STOPPED = 9
+    SERVICE_GONE = 10
+    NEW_EXE_IN_DIR = 11
+    SVC_RUNNING_NEW_PID = 12
+    MONITOR_STOPPED_UPGRADED = 13
 
     @property
     def description(self) -> str:
@@ -61,17 +69,19 @@ class TimingEvent(IntEnum):
 
 
 _TIMING_DESCRIPTIONS: dict[int, str] = {
-    1: "stAgentSvcMon.exe -monitor starts",
-    2: "nsInstallation.log created/updated",
-    3: "stAgentUI.exe is gone",
-    4: "stAgentSvc service stopped/stop_pending",
-    5: "stAgentSvc.exe process gone",
-    6: "stadrv service stopped/gone",
-    7: "stAgentSvc service stopped (after process exit)",
-    8: "stAgentSvc service removed from SCM",
-    9: "New stAgentSvc.exe in target install dir",
-    10: "stAgentSvc.exe running with new PID",
-    11: "stAgentSvcMon.exe stopped & upgraded",
+    1: "nsconfig.json clientUpdate.allowAutoUpdate = true",
+    2: "STAgent.msi downloaded (>25 MB)",
+    3: "stAgentSvcMon.exe -monitor starts",
+    4: "nsInstallation.log created/updated",
+    5: "stAgentUI.exe is gone",
+    6: "stAgentSvc service stopped/stop_pending",
+    7: "stAgentSvc.exe process gone",
+    8: "stadrv service stopped/gone",
+    9: "stAgentSvc service stopped (after process exit)",
+    10: "stAgentSvc service removed from SCM",
+    11: "New stAgentSvc.exe in target install dir",
+    12: "stAgentSvc.exe running with new PID",
+    13: "stAgentSvcMon.exe stopped & upgraded",
 }
 
 
@@ -97,6 +107,8 @@ class MonitorState:
     pre_reboot_elapsed: float = 0.0
     log_dir: str = ""
     reboot_action: Optional[int] = None
+    initial_allow_auto_update: bool = False
+    initial_msi_size: int = 0
 
 
 # ── State persistence ────────────────────────────────────────────────
@@ -354,17 +366,19 @@ class TimingMonitor:
 
         # Build detector map: timing number -> detector method
         self._detectors: dict[int, callable] = {
-            1: self._detect_monitor_process,
-            2: self._detect_installation_log,
-            3: self._detect_ui_gone,
-            4: self._detect_service_stop_pending,
-            5: self._detect_svc_process_gone,
-            6: self._detect_driver_stopped,
-            7: self._detect_service_stopped_after_exit,
-            8: self._detect_service_gone,
-            9: self._detect_new_exe_in_dir,
-            10: self._detect_svc_new_pid,
-            11: self._detect_monitor_upgraded,
+            1: self._detect_config_sync_allow_update,
+            2: self._detect_msi_downloaded,
+            3: self._detect_monitor_process,
+            4: self._detect_installation_log,
+            5: self._detect_ui_gone,
+            6: self._detect_service_stop_pending,
+            7: self._detect_svc_process_gone,
+            8: self._detect_driver_stopped,
+            9: self._detect_service_stopped_after_exit,
+            10: self._detect_service_gone,
+            11: self._detect_new_exe_in_dir,
+            12: self._detect_svc_new_pid,
+            13: self._detect_monitor_upgraded,
         }
 
     # ── Public API ───────────────────────────────────────────────
@@ -512,7 +526,7 @@ class TimingMonitor:
         lines.append(f"{'=' * 60}")
         lines.append("  Upgrade Timing Report")
         lines.append(f"{'=' * 60}")
-        for num in range(1, 12):
+        for num in range(1, TOTAL_TIMINGS + 1):
             event = TimingEvent(num)
             key = str(num)
             with self._lock:
@@ -529,7 +543,7 @@ class TimingMonitor:
             detected = len(self._state.timings)
             reboot_triggered = self._state.reboot_triggered
             reboot_time = self._state.reboot_time
-        lines.append(f"\n  Detected: {detected}/11 timings")
+        lines.append(f"\n  Detected: {detected}/{TOTAL_TIMINGS} timings")
         if reboot_triggered:
             lines.append(f"  Reboot triggered at timing {reboot_time}")
         report = "\n".join(lines)
@@ -567,18 +581,37 @@ class TimingMonitor:
                 NS_INSTALLATION_LOG.stat().st_mtime
             )
 
-        # Check if UI is currently running for timing 3 tracking
+        # Check if UI is currently running for timing 5 tracking
         if _is_process_running("stAgentUI.exe"):
             self._ui_was_seen = True
 
+        # Baseline for timing 1: clientUpdate.allowAutoUpdate
+        self._state.initial_allow_auto_update = (
+            self._read_allow_auto_update()
+        )
+
+        # Baseline for timing 2: STAgent.msi download size
+        if NS_MSI_DOWNLOAD_PATH.is_file():
+            try:
+                self._state.initial_msi_size = (
+                    NS_MSI_DOWNLOAD_PATH.stat().st_size
+                )
+            except OSError:
+                self._state.initial_msi_size = 0
+        else:
+            self._state.initial_msi_size = 0
+
         log.info(
             "Baselines: svc_pid=%s, mon_pid=%s, mon_ver=%s, "
-            "log_mtime=%s, install_dir=%s",
+            "log_mtime=%s, install_dir=%s, allow_auto_update=%s, "
+            "msi_size=%s",
             self._state.initial_svc_pid,
             self._state.initial_mon_pid,
             self._state.initial_mon_version,
             self._state.initial_log_mtime,
             self._state.initial_install_dir,
+            self._state.initial_allow_auto_update,
+            self._state.initial_msi_size,
         )
 
     # ── Polling loop ─────────────────────────────────────────────
@@ -623,9 +656,9 @@ class TimingMonitor:
 
             with self._lock:
                 count = len(self._state.timings)
-            if count == 11:
+            if count == TOTAL_TIMINGS:
                 self._all_detected.set()
-                log.info("All 11 timings detected")
+                log.info("All %d timings detected", TOTAL_TIMINGS)
                 return
 
             if elapsed >= self._timeout:
@@ -691,10 +724,46 @@ class TimingMonitor:
                 capture_output=True, text=True, timeout=10,
             )
 
+    # ── Detector helpers ─────────────────────────────────────────
+
+    @staticmethod
+    def _read_allow_auto_update() -> bool:
+        """Read clientUpdate.allowAutoUpdate from nsconfig.json."""
+        path = LocalClient.NSCONFIG_PATH
+        if not path.is_file():
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            value = (
+                config.get("clientUpdate", {})
+                .get("allowAutoUpdate", "")
+            )
+            return str(value).lower() == "true"
+        except Exception:
+            return False
+
     # ── Detector methods ─────────────────────────────────────────
 
+    def _detect_config_sync_allow_update(self) -> bool:
+        """Timing 1: nsconfig.json clientUpdate.allowAutoUpdate = true."""
+        if self._state.initial_allow_auto_update:
+            return False
+        return self._read_allow_auto_update()
+
+    def _detect_msi_downloaded(self) -> bool:
+        """Timing 2: STAgent.msi downloaded (>25 MB)."""
+        if self._state.initial_msi_size >= MSI_MIN_SIZE:
+            return False
+        if not NS_MSI_DOWNLOAD_PATH.is_file():
+            return False
+        try:
+            return NS_MSI_DOWNLOAD_PATH.stat().st_size >= MSI_MIN_SIZE
+        except OSError:
+            return False
+
     def _detect_monitor_process(self) -> bool:
-        """Timing 1: stAgentSvcMon.exe -monitor starts."""
+        """Timing 3: stAgentSvcMon.exe -monitor starts."""
         entries = _get_process_commandline("stAgentSvcMon.exe")
         for pid, cmdline in entries:
             if "-monitor" in cmdline:
@@ -708,7 +777,7 @@ class TimingMonitor:
         return False
 
     def _detect_installation_log(self) -> bool:
-        """Timing 2: nsInstallation.log created/updated."""
+        """Timing 4: nsInstallation.log created/updated."""
         if not NS_INSTALLATION_LOG.is_file():
             return False
         current_mtime = NS_INSTALLATION_LOG.stat().st_mtime
@@ -717,7 +786,7 @@ class TimingMonitor:
         return current_mtime > self._state.initial_log_mtime
 
     def _detect_ui_gone(self) -> bool:
-        """Timing 3: stAgentUI.exe is gone."""
+        """Timing 5: stAgentUI.exe is gone."""
         running = _is_process_running("stAgentUI.exe")
         if running:
             self._ui_was_seen = True
@@ -725,14 +794,14 @@ class TimingMonitor:
         return self._ui_was_seen
 
     def _detect_service_stop_pending(self) -> bool:
-        """Timing 4: stAgentSvc service stopped/stop_pending."""
+        """Timing 6: stAgentSvc service stopped/stop_pending."""
         info = LocalClient.query_service("stAgentSvc")
         return info.exists and info.state in (
             "STOP_PENDING", "STOPPED",
         )
 
     def _detect_svc_process_gone(self) -> bool:
-        """Timing 5: stAgentSvc.exe process gone (keep PID)."""
+        """Timing 7: stAgentSvc.exe process gone (keep PID)."""
         pid = _get_process_pid("stAgentSvc.exe")
         if pid is not None:
             # Still running — update last-known PID
@@ -742,37 +811,37 @@ class TimingMonitor:
         return self._state.initial_svc_pid is not None
 
     def _detect_driver_stopped(self) -> bool:
-        """Timing 6: stadrv service stopped/stop_pending/gone."""
+        """Timing 8: stadrv service stopped/stop_pending/gone."""
         info = LocalClient.query_service("stadrv")
         if not info.exists:
             return True
         return info.state in ("STOP_PENDING", "STOPPED")
 
     def _detect_service_stopped_after_exit(self) -> bool:
-        """Timing 7: stAgentSvc service stopped (after process exit)."""
+        """Timing 9: stAgentSvc service stopped (after process exit)."""
         with self._lock:
-            if "5" not in self._state.timings:
+            if "7" not in self._state.timings:
                 return False
         info = LocalClient.query_service("stAgentSvc")
         return info.exists and info.state == "STOPPED"
 
     def _detect_service_gone(self) -> bool:
-        """Timing 8: stAgentSvc service removed from SCM."""
+        """Timing 10: stAgentSvc service removed from SCM."""
         info = LocalClient.query_service("stAgentSvc")
         return not info.exists
 
     def _detect_new_exe_in_dir(self) -> bool:
-        """Timing 9: New stAgentSvc.exe in target install dir."""
+        """Timing 11: New stAgentSvc.exe in target install dir."""
         install_dir = LocalClient.get_install_dir(
             self._target_64_bit
         )
         exe = install_dir / "stAgentSvc.exe"
         if not exe.is_file():
             return False
-        # Fire if service was previously removed (timing 8) or if
+        # Fire if service was previously removed (timing 10) or if
         # the target dir differs from the initial install dir
         with self._lock:
-            service_was_gone = "8" in self._state.timings
+            service_was_gone = "10" in self._state.timings
         if service_was_gone:
             return True
         return (
@@ -780,7 +849,7 @@ class TimingMonitor:
         )
 
     def _detect_svc_new_pid(self) -> bool:
-        """Timing 10: stAgentSvc.exe running with new PID."""
+        """Timing 12: stAgentSvc.exe running with new PID."""
         pid = _get_process_pid("stAgentSvc.exe")
         if pid is None:
             return False
@@ -790,7 +859,7 @@ class TimingMonitor:
         )
 
     def _detect_monitor_upgraded(self) -> bool:
-        """Timing 11: stAgentSvcMon.exe stopped & upgraded."""
+        """Timing 13: stAgentSvcMon.exe stopped & upgraded."""
         if not self._state.initial_mon_version:
             return False
         install_dir = LocalClient.get_install_dir(

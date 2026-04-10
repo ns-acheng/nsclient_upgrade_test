@@ -89,7 +89,7 @@ class UpgradeRunner:
         :param email: User email for WebUI verification.
         :param source_64_bit: Whether the base (source) install is 64-bit.
         :param target_64_bit: Whether the upgrade target is 64-bit.
-        :param reboot_time: Timing number (1-11) that triggers a reboot.
+        :param reboot_time: Timing number (1-13) that triggers a reboot.
         :param reboot_delay: Seconds before reboot after timing fires.
         :param reboot_action: Action at reboot timing (2=kill monitor+reboot,
                               3=kill monitor+msiexec+reboot). None=default reboot.
@@ -188,12 +188,11 @@ class UpgradeRunner:
                 target_64_bit=self.target_64_bit,
             )
             self._upgrade_enabled = True
-            self.client.sync_config_from_tenant(
-                is_64_bit=self.source_64_bit, wait_seconds=10,
-            )
 
-            # Start timing monitor and wait for upgrade to complete
+            # Start monitor before sync loop so it can detect
+            # timing 1 (config sync) and timing 2 (MSI download)
             monitor = self._start_monitor()
+            self._sync_until_config_confirmed(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -357,12 +356,11 @@ class UpgradeRunner:
                 target_64_bit=self.target_64_bit,
             )
             self._upgrade_enabled = True
-            self.client.sync_config_from_tenant(
-                is_64_bit=self.source_64_bit, wait_seconds=10,
-            )
 
-            # Start timing monitor and wait for upgrade to complete
+            # Start monitor before sync loop so it can detect
+            # timing 1 (config sync) and timing 2 (MSI download)
             monitor = self._start_monitor()
+            self._sync_until_config_confirmed(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -662,6 +660,43 @@ class UpgradeRunner:
         if use_64 and not version.endswith("(64-bit)"):
             return f"{version} (64-bit)"
         return version
+
+    def _sync_until_config_confirmed(self, monitor: Any) -> None:
+        """
+        Re-sync from tenant every 30s until the config update is
+        confirmed in nsconfig.json (timing 1 fires).
+
+        The monitor's detector checks ``clientUpdate.allowAutoUpdate``
+        in nsconfig.json every polling cycle.  This method triggers
+        ``nsdiag -u`` repeatedly so the local agent pulls the latest
+        tenant config, and exits once the monitor has detected timing 1.
+
+        :param monitor: Running TimingMonitor instance.
+        """
+        SYNC_INTERVAL = 30   # seconds between re-sync attempts
+        MAX_RETRIES = 20     # 10 minutes total
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            self._check_stopped()
+            self.client.sync_config_from_tenant(
+                is_64_bit=self.source_64_bit, wait_seconds=0,
+            )
+            # Wait SYNC_INTERVAL; monitor detects timing 1 in background
+            self.stop_event.wait(timeout=SYNC_INTERVAL)
+            if 1 in monitor.get_timings():
+                log.info(
+                    "Config update confirmed in nsconfig.json "
+                    "(attempt %d)", attempt,
+                )
+                return
+            log.info(
+                "Config sync not yet confirmed — retrying "
+                "(%d/%d)", attempt, MAX_RETRIES,
+            )
+        log.warning(
+            "Config sync not confirmed after %d retries — "
+            "continuing anyway", MAX_RETRIES,
+        )
 
     def _sync_and_detect_config(self) -> None:
         """
