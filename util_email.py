@@ -59,6 +59,7 @@ class GmailBrowser:
         debug_port: int = DEFAULT_DEBUG_PORT,
         tenant_hostname: str = "",
         stop_event: Optional[threading.Event] = None,
+        profile_dir: Optional[Path] = None,
     ) -> None:
         self._email_address = email_address
         self._is_64_bit = is_64_bit
@@ -66,6 +67,7 @@ class GmailBrowser:
         self._tenant_hostname = tenant_hostname
         self._stop_event = stop_event
         self._driver: Optional[Any] = None
+        self._profile_dir = profile_dir or LOCAL_PROFILE_DIR
 
     # -- context manager ------------------------------------------------
 
@@ -896,10 +898,10 @@ class GmailBrowser:
                 "Chrome not found. Install Chrome or set the path."
             )
 
-        LOCAL_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        self._profile_dir.mkdir(parents=True, exist_ok=True)
         cmd = (
             f'start "" "{chrome_exe}"'
-            f' --user-data-dir="{LOCAL_PROFILE_DIR}"'
+            f' --user-data-dir="{self._profile_dir}"'
             f" --remote-debugging-port={self._debug_port}"
             " --remote-allow-origins=*"
             f' "{GMAIL_URL}"'

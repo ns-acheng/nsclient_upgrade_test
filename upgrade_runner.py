@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from util_client import (
     LocalClient, SERVICES,
@@ -75,6 +75,8 @@ class UpgradeRunner:
         reboot_action: Optional[int] = None,
         stop_event: Optional[threading.Event] = None,
         log_dir: Optional[Path] = None,
+        email_profiles: Optional[dict[str, str]] = None,
+        save_config_fn: Optional[Callable[[], None]] = None,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -119,6 +121,8 @@ class UpgradeRunner:
             stop_event=self.stop_event,
             log_dir=self._log_dir,
             init_nsclient_fn=self._init_nsclient,
+            email_profiles=email_profiles,
+            save_config_fn=save_config_fn,
         )
         self._verifier = UpgradeVerifier(
             client=client,

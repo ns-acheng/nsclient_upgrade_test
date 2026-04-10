@@ -15,6 +15,8 @@ from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 import threading
 
+_PROFILE_BASE_DIR = Path(__file__).parent
+
 from util_client import LocalClient
 from util_webui import WebUIClient
 
@@ -22,6 +24,51 @@ BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
 INSTALLER_JSON = Path(__file__).parent / "data" / "installer.json"
 
 log = logging.getLogger(__name__)
+
+
+def resolve_email_profile(
+    email: str,
+    email_profiles: dict[str, str],
+    save_fn: Optional[Callable[[], None]] = None,
+) -> Path:
+    """
+    Look up or auto-assign a Chrome user-data-dir for *email*.
+
+    If *email* is already in *email_profiles*, return its profile directory.
+    Otherwise assign the next available slot (local_profile →
+    local_profile2 → local_profile3 …), update *email_profiles* in-place,
+    and call *save_fn* to persist the new mapping.
+
+    :param email: Email address to resolve a profile for.
+    :param email_profiles: Mutable mapping of email → profile dir name.
+    :param save_fn: Called after a new assignment to persist config.
+    :return: Path to the Chrome user-data-dir for *email*.
+    """
+    if email in email_profiles:
+        name = email_profiles[email]
+        log.info("Using existing Chrome profile %r for %s", name, email)
+        return _PROFILE_BASE_DIR / name
+
+    used = set(email_profiles.values())
+    if "local_profile" not in used:
+        name = "local_profile"
+    else:
+        n = 2
+        while f"local_profile{n}" in used:
+            n += 1
+        name = f"local_profile{n}"
+
+    email_profiles[email] = name
+    log.info("Assigned new Chrome profile %r for %s", name, email)
+
+    if save_fn:
+        try:
+            save_fn()
+            log.info("Saved email_profiles mapping to config")
+        except Exception as exc:
+            log.warning("Failed to save email_profiles mapping: %s", exc)
+
+    return _PROFILE_BASE_DIR / name
 
 
 class InstallerManager:
@@ -41,6 +88,8 @@ class InstallerManager:
         stop_event: threading.Event,
         log_dir: Optional[Path] = None,
         init_nsclient_fn: Optional[Callable[[], bool]] = None,
+        email_profiles: Optional[dict[str, str]] = None,
+        save_config_fn: Optional[Callable[[], None]] = None,
     ) -> None:
         self.client = client
         self.webui = webui
@@ -50,6 +99,10 @@ class InstallerManager:
         self._init_nsclient = init_nsclient_fn or (lambda: False)
         self._gmail_browser: Any = None
         self._cloned_installer: Optional[Path] = None
+        self._email_profiles: dict[str, str] = (
+            email_profiles if email_profiles is not None else {}
+        )
+        self._save_config_fn = save_config_fn
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -242,11 +295,17 @@ class InstallerManager:
         """
         from util_email import GmailBrowser
 
+        profile_dir = resolve_email_profile(
+            invite_email,
+            self._email_profiles,
+            self._save_config_fn,
+        )
         self._gmail_browser = GmailBrowser(
             email_address=invite_email,
             is_64_bit=self.source_64_bit,
             tenant_hostname=self.webui.hostname,
             stop_event=self.stop_event,
+            profile_dir=profile_dir,
         )
         self._gmail_browser.connect()
 

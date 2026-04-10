@@ -32,6 +32,7 @@ class ClientConfig:
     """Local client settings."""
     platform: str = "windows"
     email_suffix: str = ""
+    email_profiles: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,6 +96,7 @@ def load_config(
         client=ClientConfig(
             platform=client_raw.get("platform", "windows"),
             email_suffix=client_raw.get("email_suffix", ""),
+            email_profiles=client_raw.get("email_profiles", {}),
         ),
         upgrade=UpgradeConfig(
             poll_interval_seconds=upgrade_raw.get("poll_interval_seconds", 30),

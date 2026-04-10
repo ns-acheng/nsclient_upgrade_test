@@ -443,6 +443,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         reboot_action=args.action,
         stop_event=stop_event,
         log_dir=log_dir,
+        email_profiles=cfg.client.email_profiles,
+        save_config_fn=lambda: save_config(cfg, args.config),
     )
 
     # Execute scenario
@@ -493,6 +495,8 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         source_64_bit=args.source_64_bit,
         stop_event=stop_event,
         log_dir=log_dir,
+        email_profiles=cfg.client.email_profiles,
+        save_config_fn=lambda: save_config(cfg, args.config),
     )
 
     result = runner.run_upgrade_disabled(
