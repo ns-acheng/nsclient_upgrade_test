@@ -207,6 +207,98 @@ python main.py reboot-setup --target latest --reboot-timing mid --source-64bit -
 python main.py reboot-verify
 ```
 
+---
+
+## Batch Runner
+
+`batch.py` runs a sequence of upgrade tests unattended, records results to
+JSON, and generates an HTML report. It supports resuming after interruption
+and survives machine reboots triggered by `--reboottime` tests.
+
+### How it works
+
+Each test is `base_args` + `extra_args`, run as a `python main.py ...`
+subprocess. Results are written to `log/batch_record.json` after every test
+so progress is never lost. An HTML report is regenerated after each test at
+`log/batch_report.html`.
+
+For reboot tests, batch.py registers a Windows scheduled task
+(`NsClientBatchContinue`, ONLOGON) **before** launching the subprocess. After
+the machine reboots and the user auto-logs in, the task calls
+`batch.py --continue`, which runs `main.py continue` to finish monitoring, then
+resumes the remaining tests.
+
+### Define your tests — `data/batch.json`
+
+```json
+{
+    "base_args": "upgrade --target latest --email acheng@netskope.com",
+    "tests": [
+        {"id": "32to32",        "extra_args": ""},
+        {"id": "32to64",        "extra_args": "--target-64bit"},
+        {"id": "64to64",        "extra_args": "--target-64bit --source-64bit"},
+        {"id": "32to64_rb1",    "extra_args": "--target-64bit --reboottime 1"},
+        {"id": "32to64_rb1_a2", "extra_args": "--target-64bit --reboottime 1 --action 2"}
+    ]
+}
+```
+
+- `base_args` — the subcommand and flags shared by all tests (must start with `upgrade` or `disable-upgrade`)
+- `tests` — list of test objects with a unique `id` and `extra_args` appended to `base_args`
+- Plain strings are also accepted in `tests`; IDs are auto-generated as `test_00`, `test_01`, …
+
+A pre-populated template covering the common 32/64-bit and reboot-timing
+combinations is included in `data/batch.json`.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `python batch.py` | Fresh run — creates a new batch record and runs all tests |
+| `python batch.py --resume` | Resume from existing record, skip completed tests |
+| `python batch.py --continue` | Resume after reboot (called automatically by scheduled task) |
+| `python batch.py --report` | Re-generate HTML report without running any tests |
+| `python batch.py --fresh` | Delete the existing record and start over |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--batch PATH` | Batch definition JSON (default: `data/batch.json`) |
+| `--record PATH` | Batch record JSON (default: `log/batch_record.json`) |
+| `-v` | Verbose logging |
+
+### Batch record — `log/batch_record.json`
+
+Persisted after every test. Each entry tracks:
+
+```
+id, extra_args, status (pending/running/pass/fail),
+version_before, version_after, expected_version,
+elapsed_seconds, message, log_dir, started_at, finished_at
+```
+
+### HTML report — `log/batch_report.html`
+
+Self-contained, no external dependencies. Open in any browser.
+
+- Color-coded status badges: green = PASS, red = FAIL, yellow = RUNNING, gray = PENDING
+- Summary row with total pass/fail/pending counts
+- Per-test table with versions, elapsed time, message, and a link to the log folder
+- Re-generated live after each test completes and on demand with `--report`
+
+### Multi-email Chrome profiles
+
+When tests use different `--email` addresses, each email is automatically
+assigned its own Chrome user-data directory so Gmail sessions don't conflict:
+
+- First email seen → `local_profile/`
+- Second email → `local_profile2/`
+- Third email → `local_profile3/`, and so on
+
+The mapping is persisted in `data/config.json` under `client.email_profiles`
+so the same email always gets the same profile across runs.
+
 ### Global Options
 
 | Option | Description |

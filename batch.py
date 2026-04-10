@@ -1,0 +1,337 @@
+"""
+Batch runner for Netskope Client auto-upgrade tests.
+
+Usage:
+    python batch.py                  Run all pending tests from data/batch.json
+    python batch.py --resume         Resume an existing batch run
+    python batch.py --continue       Resume after reboot (called by scheduled task)
+    python batch.py --report         Re-generate HTML report from existing record
+    python batch.py --fresh          Discard record and start fresh
+
+Options:
+    --batch  PATH    Batch definition JSON  (default: data/batch.json)
+    --record PATH    Batch record JSON      (default: log/batch_record.json)
+    -v               Verbose logging
+"""
+
+import argparse
+import logging
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from util_batch import (
+    BATCH_JSON,
+    BATCH_RECORD_JSON,
+    BatchRecord,
+    TestRun,
+    apply_result_to_test,
+    create_record,
+    delete_batch_continue_task,
+    generate_html_report,
+    has_reboot,
+    load_batch_config,
+    load_record,
+    read_result_file,
+    register_batch_continue_task,
+    run_test_subprocess,
+    save_record,
+)
+from util_log import setup_logging
+
+log = logging.getLogger(__name__)
+
+_GREEN = "\033[92m"
+_RED   = "\033[91m"
+_RESET = "\033[0m"
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+
+def _result_file_for(record: BatchRecord, test: TestRun) -> Path:
+    """Derive a per-test result JSON path inside the log directory."""
+    return BATCH_RECORD_JSON.parent / f"result_{record.batch_id}_{test.id}.json"
+
+
+def _next_pending_index(record: BatchRecord) -> int:
+    """Return index of the first pending/running test, or -1 if all done."""
+    for i, t in enumerate(record.tests):
+        if t.status in ("pending", "running"):
+            return i
+    return -1
+
+
+def _print_test_result(test: TestRun) -> None:
+    color = _GREEN if test.status == "pass" else _RED
+    elapsed = f"  ({test.elapsed_seconds:.0f}s)" if test.elapsed_seconds else ""
+    print(f"  [{color}{test.status.upper()}{_RESET}] {test.id}{elapsed}: {test.message or '—'}")
+
+
+def _print_summary(record: BatchRecord) -> None:
+    n_pass = sum(1 for t in record.tests if t.status == "pass")
+    n_fail = sum(1 for t in record.tests if t.status == "fail")
+    n_pend = sum(1 for t in record.tests if t.status == "pending")
+    total = len(record.tests)
+    print(f"\n{'=' * 55}")
+    print(f"  Batch {record.batch_id} complete")
+    print(
+        f"  {_GREEN}PASS {n_pass}{_RESET}  "
+        f"{_RED}FAIL {n_fail}{_RESET}  "
+        f"SKIP {n_pend}  / {total}"
+    )
+    print(f"{'=' * 55}")
+
+
+# ── Core execution loop ───────────────────────────────────────────────
+
+
+def _execute_pending(record: BatchRecord, record_path: Path) -> int:
+    """
+    Run all pending tests in *record* sequentially.
+
+    Saves the record after every test so progress is never lost.
+    For reboot tests, registers the batch continue task BEFORE
+    launching the subprocess — if the machine reboots, the task
+    fires after login and resumes via ``batch.py --continue``.
+
+    :return: 0 if all tests passed, 1 if any failed.
+    """
+    report_path = record_path.parent / "batch_report.html"
+
+    while True:
+        idx = _next_pending_index(record)
+        if idx < 0:
+            record.finished_at = datetime.now().isoformat(timespec="seconds")
+            save_record(record, record_path)
+            out = generate_html_report(record, report_path)
+            _print_summary(record)
+            print(f"\nReport: {out}")
+            all_pass = all(t.status == "pass" for t in record.tests)
+            return 0 if all_pass else 1
+
+        test = record.tests[idx]
+        result_file = _result_file_for(record, test)
+        total = len(record.tests)
+
+        print(f"\n[{idx + 1}/{total}] {test.id}")
+        if test.extra_args:
+            print(f"  Extra args: {test.extra_args}")
+
+        # Register continue task BEFORE starting a reboot test so
+        # the task is already in place when the machine reboots.
+        if has_reboot(test.extra_args):
+            register_batch_continue_task()
+
+        run_test_subprocess(record.base_args, test, result_file)
+        save_record(record, record_path)
+        _print_test_result(test)
+
+        # If we reach here the subprocess finished without rebooting.
+        # Remove the continue task we registered above.
+        if has_reboot(test.extra_args):
+            delete_batch_continue_task()
+
+        # Regenerate report after every test so partial results are
+        # always readable.
+        generate_html_report(record, report_path)
+
+
+# ── Commands ──────────────────────────────────────────────────────────
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """
+    Run all pending tests.
+
+    With ``--resume``, load the existing record and skip completed
+    tests.  Without it, always create a fresh record (existing record
+    is discarded).
+    """
+    batch_path = Path(args.batch)
+    record_path = Path(args.record)
+
+    if args.resume:
+        record = load_record(record_path)
+        if record:
+            log.info(
+                "Resuming batch %s — %d tests total",
+                record.batch_id, len(record.tests),
+            )
+        else:
+            log.info("No existing record found — starting fresh")
+
+    if not args.resume or record is None:
+        base_args, tests = load_batch_config(batch_path)
+        record = create_record(base_args, tests)
+        save_record(record, record_path)
+        log.info(
+            "New batch %s created — %d tests",
+            record.batch_id, len(record.tests),
+        )
+
+    print(f"\nBatch {record.batch_id} — {len(record.tests)} tests")
+    print(f"Base args: {record.base_args}\n")
+
+    return _execute_pending(record, record_path)
+
+
+def cmd_continue(args: argparse.Namespace) -> int:
+    """
+    Resume after reboot.
+
+    1. Delete the batch continue scheduled task.
+    2. Find the interrupted (running) test in the record.
+    3. If ``main.py continue`` monitor state exists, run it and wait.
+    4. Apply the result to the test record.
+    5. Continue with remaining pending tests.
+    """
+    record_path = Path(args.record)
+    record = load_record(record_path)
+    if record is None:
+        print("Error: No batch record found. Nothing to continue.")
+        return 1
+
+    delete_batch_continue_task()
+
+    # Find the interrupted test (status = running)
+    running_idx = next(
+        (i for i, t in enumerate(record.tests) if t.status == "running"),
+        -1,
+    )
+
+    if running_idx >= 0:
+        test = record.tests[running_idx]
+        result_file = _result_file_for(record, test)
+        log.info("Resuming interrupted test [%s]", test.id)
+
+        # Check if main.py continue (monitor state) is still pending
+        monitor_state = _load_monitor_state_safe()
+        if monitor_state is not None:
+            log.info("Monitor state found — running main.py continue")
+            _run_main_continue(result_file)
+
+        result = read_result_file(result_file)
+        if result:
+            apply_result_to_test(test, result)
+        else:
+            test.status = "fail"
+            test.message = "No result file after reboot continue"
+            test.finished_at = datetime.now().isoformat(timespec="seconds")
+
+        save_record(record, record_path)
+        _print_test_result(test)
+
+    return _execute_pending(record, record_path)
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Re-generate the HTML report from an existing record."""
+    record_path = Path(args.record)
+    record = load_record(record_path)
+    if record is None:
+        print("Error: No batch record found.")
+        return 1
+    report_path = record_path.parent / "batch_report.html"
+    out = generate_html_report(record, report_path)
+    print(f"Report generated: {out}")
+    return 0
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+
+def _load_monitor_state_safe() -> object:
+    """Return monitor state if it exists, else None (never raises)."""
+    try:
+        from util_monitor import load_monitor_state
+        return load_monitor_state()
+    except Exception:
+        return None
+
+
+def _run_main_continue(result_file: Path) -> None:
+    """
+    Run ``main.py continue --result-file <path>`` and wait for it.
+
+    Errors are logged as warnings so the batch runner can continue
+    even if the continue command fails.
+    """
+    cmd = [
+        sys.executable,
+        str(Path(__file__).parent / "main.py"),
+        "continue",
+        "--result-file", str(result_file),
+    ]
+    log.info("Executing: main.py continue --result-file %s", result_file)
+    try:
+        subprocess.run(cmd, check=False)
+    except Exception as exc:
+        log.warning("main.py continue failed: %s", exc)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="batch",
+        description="Batch Netskope Client upgrade test runner",
+    )
+    parser.add_argument(
+        "--batch", default=str(BATCH_JSON),
+        help="Batch definition JSON (default: data/batch.json)",
+    )
+    parser.add_argument(
+        "--record", default=str(BATCH_RECORD_JSON),
+        help="Batch record JSON (default: log/batch_record.json)",
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Resume from an existing batch record, skipping completed tests",
+    )
+    parser.add_argument(
+        "--continue", dest="do_continue", action="store_true",
+        help="Resume after reboot (called by scheduled task)",
+    )
+    parser.add_argument(
+        "--report", action="store_true",
+        help="Re-generate HTML report from existing record (no tests run)",
+    )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Discard existing record and start a new batch from scratch",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true")
+    return parser
+
+
+def main() -> int:
+    """Main entry point."""
+    parser = build_parser()
+    args = parser.parse_args()
+    setup_logging(verbose=args.verbose, file_logging=False)
+
+    if args.report:
+        return cmd_report(args)
+
+    if args.do_continue:
+        return cmd_continue(args)
+
+    if args.fresh:
+        record_path = Path(args.record)
+        if record_path.exists():
+            record_path.unlink()
+            print(f"Cleared {record_path}")
+
+    return cmd_run(args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nStopped by user.")
+        sys.exit(130)

@@ -1,0 +1,18 @@
+{
+    "base_args": "upgrade --target latest --email acheng@netskope.com",
+    "tests": [
+        {"id": "32to32",             "extra_args": ""},
+        {"id": "32to64",             "extra_args": "--target-64bit"},
+        {"id": "64to64",             "extra_args": "--target-64bit --source-64bit"},
+        {"id": "32to32_rb1",         "extra_args": "--reboottime 1"},
+        {"id": "32to64_rb1",         "extra_args": "--target-64bit --reboottime 1"},
+        {"id": "64to64_rb1",         "extra_args": "--target-64bit --source-64bit --reboottime 1"},
+        {"id": "32to64_rb1_a2",      "extra_args": "--target-64bit --reboottime 1 --action 2"},
+        {"id": "32to64_rb1_a3",      "extra_args": "--target-64bit --reboottime 1 --action 3"},
+        {"id": "64to64_rb1_a2",      "extra_args": "--target-64bit --source-64bit --reboottime 1 --action 2"},
+        {"id": "64to64_rb1_a3",      "extra_args": "--target-64bit --source-64bit --reboottime 1 --action 3"},
+        {"id": "32to64_rb5",         "extra_args": "--target-64bit --reboottime 5"},
+        {"id": "32to64_rb8",         "extra_args": "--target-64bit --reboottime 8"},
+        {"id": "32to64_rb13",        "extra_args": "--target-64bit --reboottime 13"}
+    ]
+}

@@ -149,6 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
             "3 = kill stAgentSvcMon + msiexec then reboot"
         ),
     )
+    upgrade_parser.add_argument(
+        "--result-file", dest="result_file", default=None,
+        help="Write JSON result to this path (used by batch runner)",
+    )
 
     # ── disable-upgrade ─────────────────────────────────────────
     disable_parser = subparsers.add_parser(
@@ -176,6 +180,10 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser.add_argument(
         "--timeout", type=int, default=600,
         help="Max seconds to wait for remaining timings (default: 600)",
+    )
+    continue_parser.add_argument(
+        "--result-file", dest="result_file", default=None,
+        help="Write JSON result to this path (used by batch runner)",
     )
 
     return parser
@@ -401,14 +409,17 @@ def cmd_continue(args: argparse.Namespace) -> int:
         state=state,
     )
     monitor.start()
-    monitor.wait_for_upgrade_complete(timeout=args.timeout)
+    completed = monitor.wait_for_upgrade_complete(timeout=args.timeout)
     monitor.stop()
     monitor.print_report()
 
     clear_monitor_state()
     delete_continue_task()
 
-    return 0
+    if getattr(args, "result_file", None):
+        _write_continue_result_json(completed, log_dir, args.result_file)
+
+    return 0 if completed else 1
 
 
 def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
@@ -468,6 +479,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
 
     # Print result summary
     _print_result(result)
+    if args.result_file:
+        _write_result_json(result, runner.log_dir, args.result_file)
     return 0 if result.success else 1
 
 
@@ -563,6 +576,85 @@ def _print_result(result: UpgradeResult) -> None:
         line = line.replace("[FAIL]", f"[{_RED}FAIL{_RESET}]")
         colored_lines.append(line)
     print("\n" + "\n".join(colored_lines) + "\n")
+
+
+def _write_result_json(
+    result: "UpgradeResult",
+    log_dir: "Optional[Path]",
+    path: str,
+) -> None:
+    """
+    Write an UpgradeResult as JSON for the batch runner.
+
+    :param result: The UpgradeResult to serialize.
+    :param log_dir: The scenario log directory (may be None).
+    :param path: File path to write.
+    """
+    import json as _json
+    data = {
+        "success": result.success,
+        "scenario": result.scenario,
+        "version_before": result.version_before,
+        "version_after": result.version_after,
+        "expected_version": result.expected_version,
+        "webui_version": result.webui_version,
+        "elapsed_seconds": result.elapsed_seconds,
+        "message": result.message,
+        "log_dir": str(log_dir) if log_dir else "",
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2)
+            f.write("\n")
+        log.info("Result written to %s", path)
+    except Exception as exc:
+        log.warning("Failed to write result file: %s", exc)
+
+
+def _write_continue_result_json(
+    completed: bool,
+    log_dir: "Optional[Path]",
+    path: str,
+) -> None:
+    """
+    Write a post-reboot continue result JSON for the batch runner.
+
+    :param completed: Whether wait_for_upgrade_complete() returned True.
+    :param log_dir: The scenario log directory.
+    :param path: File path to write.
+    """
+    import json as _json
+    version_after = ""
+    try:
+        reg = LocalClient.check_uninstall_registry()
+        if reg.found:
+            version_after = reg.display_version
+    except Exception:
+        pass
+    service_ok = LocalClient.is_service_running()
+    success = completed and service_ok
+    data = {
+        "success": success,
+        "scenario": "continue",
+        "version_before": "",
+        "version_after": version_after,
+        "expected_version": "",
+        "webui_version": "",
+        "elapsed_seconds": 0.0,
+        "log_dir": str(log_dir) if log_dir else "",
+        "message": (
+            f"Post-reboot upgrade complete (version={version_after})"
+            if success
+            else "Post-reboot upgrade timed out or service not running"
+        ),
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2)
+            f.write("\n")
+        log.info("Continue result written to %s", path)
+    except Exception as exc:
+        log.warning("Failed to write continue result file: %s", exc)
 
 
 def _prompt_password(label: str) -> str:
