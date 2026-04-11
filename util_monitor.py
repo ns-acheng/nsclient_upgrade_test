@@ -781,8 +781,6 @@ class TimingMonitor:
 
     def _detect_msi_downloaded(self) -> bool:
         """Timing 2: STAgent.msi downloaded (>25 MB)."""
-        if self._state.initial_msi_size >= MSI_MIN_SIZE:
-            return False
         if not NS_MSI_DOWNLOAD_PATH.is_file():
             return False
         try:
