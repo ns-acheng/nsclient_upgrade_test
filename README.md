@@ -256,6 +256,8 @@ combinations is included in `data/batch.json`.
 |---------|-------------|
 | `python batch.py` | Fresh run — prompts if a record already exists (see below) |
 | `python batch.py --resume` | Resume from existing record, skip completed tests |
+| `python batch.py --retry-failed` | Reset all failed tests to pending and re-run |
+| `python batch.py --retry ID [ID ...]` | Reset specific test(s) by ID and re-run |
 | `python batch.py --continue` | Resume after reboot (called automatically by scheduled task) |
 | `python batch.py --report` | Re-generate HTML report without running any tests |
 | `python batch.py --fresh` | Silently delete the existing record and start over |
@@ -267,6 +269,28 @@ combinations is included in `data/batch.json`.
 | `--batch PATH` | Batch definition JSON (default: `data/batch.json`) |
 | `--record PATH` | Batch record JSON (default: `log/batch_record.json`) |
 | `-v` | Verbose logging |
+
+### Re-running failed tests
+
+To re-run all failed tests without touching passed ones:
+
+```bash
+python batch.py --retry-failed
+```
+
+To re-run specific tests by ID:
+
+```bash
+python batch.py --retry 32to64_rb1 64to64_rb1_a2
+```
+
+Both commands load the existing record, reset the target tests to `pending`
+(clearing their previous results), and continue the batch from there.  Tests
+that are already `pass` or still `pending` are left untouched unless
+explicitly named in `--retry`.
+
+If a `--retry` ID is not found in the record, a warning is printed and the
+rest proceed normally.
 
 ### Crash / interruption recovery
 

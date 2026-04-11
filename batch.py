@@ -149,10 +149,30 @@ def cmd_run(args: argparse.Namespace) -> int:
     With ``--resume``, load the existing record and skip completed
     tests.  Without it, start fresh — but if a record already exists,
     prompt the user to overwrite or back it up first.
+
+    With ``--retry-failed`` or ``--retry ID``, load the existing record,
+    reset the target tests to pending, and re-run.
     """
     batch_path = Path(args.batch)
     record_path = Path(args.record)
 
+    # ── Retry mode ────────────────────────────────────────────────────
+    if args.retry_failed or args.retry:
+        record = load_record(record_path)
+        if record is None:
+            print("Error: No batch record found. Run batch.py first.")
+            return 1
+        n = _reset_tests(record, retry_failed=args.retry_failed,
+                         retry_ids=args.retry or [])
+        if n == 0:
+            print("No matching tests found to retry.")
+            return 0
+        save_record(record, record_path)
+        print(f"\nBatch {record.batch_id} — {n} test(s) reset to pending")
+        print(f"Base args: {record.base_args}\n")
+        return _execute_pending(record, record_path)
+
+    # ── Resume mode ───────────────────────────────────────────────────
     if args.resume:
         record = load_record(record_path)
         if record:
@@ -181,6 +201,45 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"Base args: {record.base_args}\n")
 
     return _execute_pending(record, record_path)
+
+
+def _reset_test(test: TestRun) -> None:
+    """Clear all result fields and set status back to pending."""
+    test.status = "pending"
+    test.log_dir = ""
+    test.version_before = ""
+    test.version_after = ""
+    test.expected_version = ""
+    test.elapsed_seconds = 0.0
+    test.message = ""
+    test.started_at = ""
+    test.finished_at = ""
+
+
+def _reset_tests(
+    record: BatchRecord,
+    retry_failed: bool = False,
+    retry_ids: list[str] | None = None,
+) -> int:
+    """
+    Reset tests to pending in-place.
+
+    :param retry_failed: Reset every test whose status is ``fail``.
+    :param retry_ids: Reset tests whose id is in this list (any status).
+    :return: Number of tests reset.
+    """
+    ids = set(retry_ids or [])
+    n = 0
+    for test in record.tests:
+        if (retry_failed and test.status == "fail") or test.id in ids:
+            _reset_test(test)
+            log.info("Reset test [%s] to pending", test.id)
+            n += 1
+
+    unknown = ids - {t.id for t in record.tests}
+    for uid in sorted(unknown):
+        print(f"  Warning: test ID '{uid}' not found in record")
+    return n
 
 
 def _prompt_overwrite_or_backup(record_path: Path) -> Optional[BatchRecord]:
@@ -348,6 +407,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fresh", action="store_true",
         help="Discard existing record and start a new batch from scratch",
+    )
+    parser.add_argument(
+        "--retry-failed", dest="retry_failed", action="store_true",
+        help="Reset all failed tests to pending and re-run them",
+    )
+    parser.add_argument(
+        "--retry", nargs="+", metavar="ID",
+        help="Reset specific test(s) by ID to pending and re-run",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
