@@ -141,32 +141,37 @@ python main.py upgrade --target golden-dot
 
 #### Upgrade with timing monitor
 
-Monitor 11 upgrade lifecycle events in a background thread while the
+Monitor 13 upgrade lifecycle events in a background thread while the
 upgrade runs. Optionally trigger a reboot at a specific timing:
 
 ```bash
 # Monitor only (no reboot) -- timing report prints after upgrade completes
 python main.py upgrade --target latest --source-64bit --target-64bit --reboottime 5 --rebootdelay 0
 
-# Reboot when timing 5 fires (stAgentSvc.exe process gone), delay 5s
+# Reboot when timing 5 fires (stAgentUI.exe is gone), delay 5s
 python main.py upgrade --target latest --source-64bit --reboottime 5 --rebootdelay 5
 ```
 
-The 11 monitored timings:
+The 13 monitored timings:
 
 | # | Event |
 |---|-------|
-| 1 | stAgentSvcMon.exe -monitor starts |
-| 2 | nsInstallation.log created/updated |
-| 3 | stAgentUI.exe is gone |
-| 4 | stAgentSvc service stopped/stop_pending |
-| 5 | stAgentSvc.exe process gone |
-| 6 | stadrv service stopped/gone |
-| 7 | stAgentSvc service stopped (after process exit) |
-| 8 | stAgentSvc service removed from SCM |
-| 9 | New stAgentSvc.exe in target install dir |
-| 10 | stAgentSvc.exe running with new PID |
-| 11 | stAgentSvcMon.exe stopped & upgraded |
+| 1 | nsconfig.json clientUpdate.allowAutoUpdate = true |
+| 2 | STAgent.msi downloaded (>25 MB) |
+| 3 | stAgentSvcMon.exe -monitor starts |
+| 4 | nsInstallation.log created/updated |
+| 5 | stAgentUI.exe is gone |
+| 6 | stAgentSvc service stopped/stop_pending |
+| 7 | stAgentSvc.exe process gone |
+| 8 | stadrv service stopped/gone |
+| 9 | stAgentSvc service stopped (after process exit) |
+| 10 | stAgentSvc service removed from SCM |
+| 11 | New stAgentSvc.exe in target install dir |
+| 12 | stAgentSvc.exe running with new PID |
+| 13 | stAgentSvcMon.exe stopped & upgraded |
+
+> **Note:** Timing 3 never fires in watchdog mode — the tool detects this
+> and automatically skips `--reboottime 3` tests with a PASS result.
 
 When `--reboottime` triggers a reboot, the tool saves monitor state to
 `data/monitor_state.json` and creates a scheduled task to run
@@ -403,7 +408,7 @@ so the same email always gets the same profile across runs.
 | `--source-64bit` | Source (base) install is 64-bit |
 | `--target-64bit` | Upgrade target is 64-bit |
 | `--email` | Send enrollment email invite before upgrade |
-| `--reboottime N` | Timing number (1-11) that triggers a reboot during upgrade |
+| `--reboottime N` | Timing number (1-13) that triggers a reboot during upgrade |
 | `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
 
 ## Unit Tests
@@ -448,7 +453,7 @@ python -m pytest test/ -v
   - **MonitorState** — save/load/clear round-trip, corrupt/missing file handling
   - **Process helpers** — tasklist PID extraction, wmic command line parsing
   - **Scheduled task** — create/delete continue task
-  - **Detectors** — all 11 timing detectors with mocked subprocess/file state
+  - **Detectors** — all 13 timing detectors with mocked subprocess/file state
   - **Polling loop** — stop event, timeout exit conditions
   - **Reboot trigger** — state save, task creation, shutdown command
   - **Report** — formatted output with/without timings, reboot indication
