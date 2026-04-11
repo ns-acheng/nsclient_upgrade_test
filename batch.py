@@ -72,15 +72,6 @@ def _print_test_result(test: TestRun) -> None:
     print(f"  [{color}{test.status.upper()}{_RESET}] {test.id}{elapsed}: {test.message or '—'}")
 
 
-def _abort_remaining(record: BatchRecord, reason: str) -> None:
-    """Mark all pending tests as failed with the given reason."""
-    for test in record.tests:
-        if test.status == "pending":
-            test.status = "fail"
-            test.message = reason[:200]
-            test.finished_at = datetime.now().isoformat(timespec="seconds")
-
-
 def _print_summary(record: BatchRecord) -> None:
     n_pass = sum(1 for t in record.tests if t.status == "pass")
     n_fail = sum(1 for t in record.tests if t.status == "fail")
@@ -153,7 +144,7 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
         save_record(record, record_path)
         _print_test_result(test)
 
-        # Critical post-upgrade validation failure — teardown and stop.
+        # Critical post-upgrade validation failure — stop immediately.
         if test.critical_failure:
             log.error(
                 "Critical post-upgrade validation failure in [%s] — stopping batch.",
@@ -161,10 +152,8 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
             )
             print(f"\n{'!' * 55}")
             print(f"  CRITICAL: Post-upgrade validation failed in {test.id}")
-            print(f"  Tearing down remaining tests and stopping batch.")
+            print(f"  Stopping batch. Remaining tests left as pending.")
             print(f"{'!' * 55}")
-            abort_reason = f"Batch aborted: critical validation failure in {test.id}"
-            _abort_remaining(record, abort_reason)
             record.finished_at = datetime.now().isoformat(timespec="seconds")
             save_record(record, record_path)
             generate_html_report(record, report_path)
