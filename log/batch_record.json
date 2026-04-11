@@ -89,16 +89,16 @@
     {
       "id": "64to32_rb1",
       "extra_args": "--source-64bit --reboottime 1",
-      "status": "running",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "2026-04-11T22:19:02",
-      "finished_at": "",
-      "critical_failure": false
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_222213_from135.1_to137.0_reboottime_1",
+      "version_before": "135.1.10.2611 (64-bit)",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655",
+      "elapsed_seconds": 422.5380845069885,
+      "message": "Upgrade successful: 135.1.10.2611 (64-bit) -> 137.0.0.2655 \u2014 ISSUES: missing exe: stAgentSvcMon.exe, old arch files not cleaned: stAgentSvcMon.exe",
+      "started_at": "2026-04-11T22:19:05",
+      "finished_at": "2026-04-11T22:26:25",
+      "critical_failure": true
     },
     {
       "id": "64to64_rb1",
@@ -117,43 +117,43 @@
     {
       "id": "32to32_rb2",
       "extra_args": "--reboottime 2",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "started_at": "2026-04-11T22:27:23",
+      "finished_at": "2026-04-11T22:31:00",
       "critical_failure": false
     },
     {
       "id": "32to64_rb2",
       "extra_args": "--target-64bit --reboottime 2",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_223024_from135.1_to137.0_reboottime_2",
+      "version_before": "135.1.10.2611",
+      "version_after": "135.1.10.2611",
+      "expected_version": "137.0.0.2655",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "Upgrade FAILED: expected 137.0.0.2655, got 135.1.10.2611",
+      "started_at": "2026-04-11T22:31:00",
+      "finished_at": "2026-04-11T22:33:22",
       "critical_failure": false
     },
     {
       "id": "64to32_rb2",
       "extra_args": "--source-64bit --reboottime 2",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "Stopped by user",
+      "started_at": "2026-04-11T22:33:22",
+      "finished_at": "2026-04-11T22:33:32",
       "critical_failure": false
     },
     {
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-11T22:18:21"
+  "finished_at": "2026-04-11T22:33:32"
 }

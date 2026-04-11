@@ -428,7 +428,7 @@ def cmd_continue(args: argparse.Namespace) -> int:
 
     if getattr(args, "result_file", None):
         _write_result_json(result, log_dir, args.result_file)
-    elif result.success and state.original_argv:
+    elif state.original_argv:
         _try_record_manual_result(result, log_dir, state.original_argv)
 
     return 0 if result.success else 1
@@ -601,8 +601,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
     _print_result(result)
     if args.result_file:
         _write_result_json(result, runner.log_dir, args.result_file, started_at=start_time)
-    if result.success:
-        _try_record_manual_result(result, runner.log_dir, sys.argv[1:], started_at=start_time)
+    _try_record_manual_result(result, runner.log_dir, sys.argv[1:], started_at=start_time)
     return 0 if result.success else 1
 
 
@@ -811,14 +810,18 @@ def _try_record_manual_result(
     started_at: str = "",
 ) -> None:
     """
-    If a batch record exists and *argv* matches a pending test, mark
-    that test as passed.  Silently skips if no record or no match.
-    Only called for successful results — failures are ignored.
+    If a batch record exists and *argv* matches a recordable test, update
+    that test with the result.  Silently skips if no record or no match.
+
+    For success results: updates any matching test.
+    For failure/critical-failure results: updates a matching test only if
+    the test is pending, or if the test is already failed but has no
+    Before/After/Log information yet.
 
     Matching is order-insensitive: argv tokens are normalised to a
     frozenset and compared against each test's full args frozenset.
 
-    :param result: Successful UpgradeResult from this run.
+    :param result: UpgradeResult from this run.
     :param log_dir: Scenario log directory.
     :param argv: sys.argv[1:] from this invocation.
     :param started_at: ISO timestamp when the run started.
@@ -840,6 +843,7 @@ def _try_record_manual_result(
             log.info("Created batch record from %s", BATCH_JSON)
 
         manual_set = _normalize_argv(argv)
+        is_failure = not result.success
 
         for test in record.tests:
             full = (record.base_args + " " + test.extra_args).strip()
@@ -847,8 +851,21 @@ def _try_record_manual_result(
             if batch_set != manual_set:
                 continue
 
+            # For failure results: only update if test is pending, or if
+            # test is already failed with no Before/After/Log info.
+            if is_failure:
+                is_empty_fail = (
+                    test.status == "fail"
+                    and not test.version_before
+                    and not test.version_after
+                    and not test.log_dir
+                )
+                if test.status != "pending" and not is_empty_fail:
+                    continue
+
             apply_result_to_test(test, {
-                "success": True,
+                "success": result.success,
+                "critical_failure": result.critical_failure,
                 "log_dir": str(log_dir) if log_dir else "",
                 "version_before": result.version_before,
                 "version_after": result.version_after,
