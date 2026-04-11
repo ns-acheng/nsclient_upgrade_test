@@ -113,6 +113,10 @@ The local Netskope Client stores its configuration at
   `disable_auto_upgrade`, `enable_upgrade_*`, `set_upgrade_schedule`) must pass
   the correct `config_name` as `search_config` so changes apply to the right
   configuration — otherwise they silently save to the default tenant config.
+- **`clientConfig.nsclient_watchdog_monitor`** — Watchdog mode flag. **Always
+  nested under `clientConfig`**, never at the top level. Value is the **string**
+  `"true"` or `"false"` (not a JSON boolean). Read it as:
+  `config["clientConfig"].get("nsclient_watchdog_monitor") == "true"`
 
 ### Config Sync After Fresh Install (nsdiag -u)
 

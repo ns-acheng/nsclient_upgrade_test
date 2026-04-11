@@ -649,10 +649,10 @@ class LocalClient:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-            raw = config.get("nsclient_watchdog_monitor")
-            result = bool(raw)
+            raw = config.get("clientConfig", {}).get("nsclient_watchdog_monitor")
+            result = str(raw).lower() == "true" if raw is not None else False
             log.info(
-                "is_watchdog_mode: read %s — nsclient_watchdog_monitor=%r → %s",
+                "is_watchdog_mode: read %s — clientConfig.nsclient_watchdog_monitor=%r → %s",
                 path, raw, result,
             )
             return result

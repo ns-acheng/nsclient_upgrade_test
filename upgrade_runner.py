@@ -115,6 +115,7 @@ class UpgradeRunner:
         self._upgrade_enabled = False
         self._log_dir: Optional[Path] = log_dir
         self._batch_mode = batch_mode
+        self._watchdog_mode: bool = False
 
         # Composed helpers
         self._installer = InstallerManager(
@@ -171,6 +172,9 @@ class UpgradeRunner:
             )
             self._check_stopped()
             self._sync_and_detect_config()
+            skip = self._skip_if_timing_not_applicable(scenario, start_time)
+            if skip:
+                return skip
 
             # Phase 2: Init nsclient + read version
             self._check_stopped()
@@ -334,6 +338,9 @@ class UpgradeRunner:
             )
             self._check_stopped()
             self._sync_and_detect_config()
+            skip = self._skip_if_timing_not_applicable(scenario, start_time)
+            if skip:
+                return skip
 
             # Phase 2: Init nsclient + read version
             self._check_stopped()
@@ -481,6 +488,9 @@ class UpgradeRunner:
             )
             self._check_stopped()
             self._sync_and_detect_config()
+            skip = self._skip_if_timing_not_applicable(scenario, start_time)
+            if skip:
+                return skip
 
             # Phase 2: Init nsclient + read version
             self._check_stopped()
@@ -755,8 +765,38 @@ class UpgradeRunner:
                 "Could not detect config_name after sync — "
                 "API calls will target the default config"
             )
-        watchdog = LocalClient.is_watchdog_mode()
-        log.info("Watchdog mode: %s", watchdog)
+        self._watchdog_mode = LocalClient.is_watchdog_mode()
+        log.info("Watchdog mode: %s", self._watchdog_mode)
+
+    # ── Timing applicability ─────────────────────────────────────────
+
+    def _skip_if_timing_not_applicable(
+        self, scenario: str, start_time: float,
+    ) -> Optional["UpgradeResult"]:
+        """
+        Return a PASS UpgradeResult if the configured reboot timing will
+        never fire under the current conditions, so the test is skipped.
+
+        Timing 3 (stAgentSvcMon.exe -monitor starts) never fires in watchdog
+        mode — the monitor process lifecycle is managed differently.
+        """
+        if self.reboot_time == 3 and self._watchdog_mode:
+            msg = (
+                "Skipped: reboottime 3 (stAgentSvcMon.exe -monitor) "
+                "never fires in watchdog mode"
+            )
+            log.info(msg)
+            return UpgradeResult(
+                success=True,
+                scenario=scenario,
+                version_before="",
+                version_after="",
+                expected_version="",
+                webui_version="",
+                elapsed_seconds=time.time() - start_time,
+                message=msg,
+            )
+        return None
 
     # ── Log folder & failure collection ──────────────────────────────
 
