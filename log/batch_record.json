@@ -313,44 +313,44 @@
     {
       "id": "64to32_rb5",
       "extra_args": "--source-64bit --reboottime 5",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "started_at": "2026-04-11T16:39:51",
+      "finished_at": "2026-04-11T16:49:13",
       "critical_failure": false
     },
     {
       "id": "64to64_rb5",
       "extra_args": "--target-64bit --source-64bit --reboottime 5",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_165415_from137.0_to137.0x64_reboottime_5",
+      "version_before": "137.0.0.2655",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655 (64-bit)",
+      "elapsed_seconds": 555.7639219760895,
+      "message": "Upgrade FAILED: expected 137.0.0.2655 (64-bit), got 137.0.0.2655 \u2014 ISSUES: missing exe: stAgentSvc.exe, stAgentUI.exe, exe version mismatch: stAgentSvcMon.exe: 135.1.10.2611 (expected 137.0.0.2655)",
+      "started_at": "2026-04-11T16:51:03",
+      "finished_at": "2026-04-11T17:00:37",
+      "critical_failure": true
     },
     {
       "id": "32to32_rb6",
       "extra_args": "--reboottime 6",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_174308_from135.1_to137.0_reboottime_6",
+      "version_before": "135.1.10.2611",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655",
+      "elapsed_seconds": 194.1503837108612,
+      "message": "Upgrade successful: 135.1.10.2611 -> 137.0.0.2655 \u2014 ISSUES: exe version mismatch: stAgentSvcMon.exe: 135.1.10.2611 (expected 137.0.0.2655)",
+      "started_at": "2026-04-11T17:40:01",
+      "finished_at": "2026-04-11T17:43:48",
+      "critical_failure": true
     },
     {
       "id": "32to64_rb6",
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-11T16:31:26"
+  "finished_at": "2026-04-11T17:43:49"
 }

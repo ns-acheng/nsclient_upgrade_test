@@ -888,13 +888,17 @@ def main() -> int:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = LOG_DIR / f"upgrade_{timestamp}"
         setup_folder_logging(log_dir)
-        # Clear any stale monitor state left from a previous interrupted run.
-        from util_monitor import clear_monitor_state, MONITOR_STATE_PATH
+        # Clear any stale monitor state and scheduled task left from a
+        # previous interrupted run so they don't fire unexpectedly on reboot.
+        from util_monitor import (
+            clear_monitor_state, delete_continue_task, MONITOR_STATE_PATH,
+        )
         if MONITOR_STATE_PATH.is_file():
             log.warning(
                 "Stale monitor_state.json found — removing before fresh start"
             )
             clear_monitor_state()
+        delete_continue_task()
     log.info("main.py %s", " ".join(sys.argv[1:]))
 
     # Validate config

@@ -316,10 +316,12 @@ def cmd_continue(args: argparse.Namespace) -> int:
     Resume after reboot.
 
     1. Delete the batch continue scheduled task.
-    2. Find the interrupted (running) test in the record.
-    3. If ``main.py continue`` monitor state exists, run it and wait.
-    4. Apply the result to the test record.
-    5. Continue with remaining pending tests.
+    2. Delete any stale NsClientMonitorContinue task (batch runner owns
+       post-reboot logic; the monitor continue task is not used in batch mode).
+    3. Find the interrupted (running) test in the record.
+    4. If ``main.py continue`` monitor state exists, run it and wait.
+    5. Apply the result to the test record.
+    6. Continue with remaining pending tests.
     """
     record_path = Path(args.record)
     record = load_record(record_path)
@@ -328,6 +330,13 @@ def cmd_continue(args: argparse.Namespace) -> int:
         return 1
 
     delete_batch_continue_task()
+
+    # Clean up any stale NsClientMonitorContinue task. In batch mode the
+    # batch runner calls main.py continue directly; a leftover task from
+    # a prior non-batch run (or an interrupted run) firing on this logon
+    # would just show an error console and confuse the user.
+    from util_monitor import delete_continue_task as _delete_monitor_task
+    _delete_monitor_task()
 
     # Find the interrupted test (status = running)
     running_idx = next(
