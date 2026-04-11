@@ -644,11 +644,18 @@ class LocalClient:
         """
         path = nsconfig_path or LocalClient.NSCONFIG_PATH
         if not path.is_file():
+            log.warning("is_watchdog_mode: %s not found", path)
             return False
         try:
             with open(path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-            return bool(config.get("nsclient_watchdog_monitor", False))
+            raw = config.get("nsclient_watchdog_monitor")
+            result = bool(raw)
+            log.info(
+                "is_watchdog_mode: read %s — nsclient_watchdog_monitor=%r → %s",
+                path, raw, result,
+            )
+            return result
         except Exception as exc:
             log.warning("Failed to read watchdog mode from nsconfig: %s", exc)
             return False

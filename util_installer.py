@@ -159,6 +159,30 @@ class InstallerManager:
         uninstall_info = self.client.check_uninstall_registry()
         service_running = self.client.is_service_running()
 
+        # Email fetch result holder — populated by background thread when
+        # an uninstall is needed and invite_email is set.
+        _email_result: list[str] = []
+        _email_thread: Optional[threading.Thread] = None
+
+        def _start_email_thread() -> None:
+            """Start email invite fetch in background if invite_email is set."""
+            nonlocal _email_thread
+            if not invite_email:
+                return
+            def _fetch() -> None:
+                try:
+                    link = self._fetch_download_link_from_gmail(invite_email)
+                    _email_result.append(link)
+                except Exception as exc:
+                    log.warning("Email fetch thread failed: %s", exc)
+                    _email_result.append("")
+            _email_thread = threading.Thread(
+                target=_fetch, name="email-invite", daemon=True,
+            )
+            _email_thread.start()
+            log.info("Email invite thread started in parallel with uninstall")
+
+        needs_uninstall = False
         if uninstall_info.found and msi_version:
             installed_version = uninstall_info.display_version
             log.info(
@@ -176,16 +200,14 @@ class InstallerManager:
                     "Same version but not running — uninstalling "
                     "before reinstall"
                 )
-                self.client.uninstall_msi(uninstall_info.product_code)
-                time.sleep(10)
+                needs_uninstall = True
             else:
                 log.info(
                     "Installed version %s differs from base MSI %s "
                     "— uninstalling first",
                     installed_version, msi_version,
                 )
-                self.client.uninstall_msi(uninstall_info.product_code)
-                time.sleep(10)
+                needs_uninstall = True
         elif uninstall_info.found:
             if service_running:
                 log.info(
@@ -197,21 +219,31 @@ class InstallerManager:
                 "Client installed but not running (no MSI version) "
                 "— uninstalling"
             )
-            self.client.uninstall_msi(uninstall_info.product_code)
-            time.sleep(10)
+            needs_uninstall = True
         else:
             log.info("No existing installation found")
+
+        if needs_uninstall:
+            _start_email_thread()
+            self.client.uninstall_msi(uninstall_info.product_code)
+            time.sleep(10)
 
         # Step 4: Full install flow
         log.info("Installing base client")
 
-        # Get download link from email invite (also sends the invite)
+        # Get download link — use background thread result if available,
+        # otherwise fetch now (no uninstall was needed).
         download_link = ""
         installer_name = None
         if invite_email:
-            download_link = self._fetch_download_link_from_gmail(
-                invite_email
-            )
+            if _email_thread is not None:
+                log.info("Waiting for email invite thread to complete...")
+                _email_thread.join()
+                download_link = _email_result[0] if _email_result else ""
+            else:
+                download_link = self._fetch_download_link_from_gmail(
+                    invite_email
+                )
             installer_name = self._get_installer_name(download_link)
             if installer_name:
                 print(f"Installer name: {installer_name}")
