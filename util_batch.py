@@ -147,7 +147,13 @@ def apply_result_to_test(test: TestRun, result: dict) -> None:
     test.expected_version = result.get("expected_version", "")
     test.elapsed_seconds = float(result.get("elapsed_seconds", 0.0))
     test.message = result.get("message", "")
-    test.finished_at = datetime.now().isoformat(timespec="seconds")
+    if result.get("started_at"):
+        test.started_at = result["started_at"]
+    test.finished_at = (
+        result["finished_at"]
+        if result.get("finished_at")
+        else datetime.now().isoformat(timespec="seconds")
+    )
 
 
 # ── Test execution ────────────────────────────────────────────────────
@@ -323,7 +329,7 @@ def generate_html_report(
         "<table><thead>\n"
         "<tr><th>ID</th><th>Extra Args</th><th>Status</th>"
         "<th>Before</th><th>After</th><th>Expected</th>"
-        "<th>Elapsed</th><th>Logs</th><th>Message</th></tr>\n"
+        "<th>Started</th><th>Elapsed</th><th>Logs</th><th>Message</th></tr>\n"
         "</thead>\n"
         f"<tbody>\n{rows_html}\n</tbody></table>\n"
         "</body></html>\n"
@@ -347,6 +353,7 @@ def _build_table_rows(tests: list[TestRun]) -> str:
             log_cell = f"<a href='file:///{url}'>open</a>"
         else:
             log_cell = "&mdash;"
+        started = t.started_at[:16].replace("T", " ") if t.started_at else "&mdash;"
         rows.append(
             f"<tr style='background:{bg}'>"
             f"<td>{t.id}</td>"
@@ -355,6 +362,7 @@ def _build_table_rows(tests: list[TestRun]) -> str:
             f"<td>{t.version_before or '&mdash;'}</td>"
             f"<td>{t.version_after or '&mdash;'}</td>"
             f"<td>{t.expected_version or '&mdash;'}</td>"
+            f"<td style='white-space:nowrap'>{started}</td>"
             f"<td>{elapsed}</td>"
             f"<td>{log_cell}</td>"
             f"<td class='msg'>{msg}</td>"

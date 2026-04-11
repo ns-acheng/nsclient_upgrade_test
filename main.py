@@ -427,6 +427,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
     """Run an upgrade scenario."""
     from util_input import start_input_monitor
 
+    start_time = datetime.now().isoformat(timespec="seconds")
+
     # ESC key monitor — sets stop_event for graceful shutdown
     stop_event = threading.Event()
     start_input_monitor(stop_event)
@@ -480,7 +482,9 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
     # Print result summary
     _print_result(result)
     if args.result_file:
-        _write_result_json(result, runner.log_dir, args.result_file)
+        _write_result_json(result, runner.log_dir, args.result_file, started_at=start_time)
+    if result.success:
+        _try_record_manual_result(result, runner.log_dir, sys.argv[1:], started_at=start_time)
     return 0 if result.success else 1
 
 
@@ -582,6 +586,7 @@ def _write_result_json(
     result: "UpgradeResult",
     log_dir: "Optional[Path]",
     path: str,
+    started_at: str = "",
 ) -> None:
     """
     Write an UpgradeResult as JSON for the batch runner.
@@ -589,6 +594,7 @@ def _write_result_json(
     :param result: The UpgradeResult to serialize.
     :param log_dir: The scenario log directory (may be None).
     :param path: File path to write.
+    :param started_at: ISO timestamp when the test started.
     """
     import json as _json
     data = {
@@ -601,6 +607,8 @@ def _write_result_json(
         "elapsed_seconds": result.elapsed_seconds,
         "message": result.message,
         "log_dir": str(log_dir) if log_dir else "",
+        "started_at": started_at,
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
     }
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -615,6 +623,7 @@ def _write_continue_result_json(
     completed: bool,
     log_dir: "Optional[Path]",
     path: str,
+    started_at: str = "",
 ) -> None:
     """
     Write a post-reboot continue result JSON for the batch runner.
@@ -622,6 +631,7 @@ def _write_continue_result_json(
     :param completed: Whether wait_for_upgrade_complete() returned True.
     :param log_dir: The scenario log directory.
     :param path: File path to write.
+    :param started_at: ISO timestamp when the original test started.
     """
     import json as _json
     version_after = ""
@@ -642,6 +652,8 @@ def _write_continue_result_json(
         "webui_version": "",
         "elapsed_seconds": 0.0,
         "log_dir": str(log_dir) if log_dir else "",
+        "started_at": started_at,
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
         "message": (
             f"Post-reboot upgrade complete (version={version_after})"
             if success
@@ -655,6 +667,96 @@ def _write_continue_result_json(
         log.info("Continue result written to %s", path)
     except Exception as exc:
         log.warning("Failed to write continue result file: %s", exc)
+
+
+# Flags to strip when matching manual argv against batch test args.
+# These are meta-flags that don't affect which test is being run.
+_STRIP_FLAGS_WITH_VAL = frozenset({
+    "--config", "--tenant", "--username", "--password", "--result-file",
+})
+_STRIP_FLAGS_BOOL = frozenset({"-v", "--verbose"})
+
+
+def _normalize_argv(tokens: list[str]) -> frozenset[str]:
+    """
+    Strip meta-flags from argv tokens and return a frozenset for
+    order-insensitive comparison against batch test arg sets.
+    """
+    out: list[str] = []
+    skip_next = False
+    for tok in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in _STRIP_FLAGS_WITH_VAL:
+            skip_next = True
+            continue
+        if tok in _STRIP_FLAGS_BOOL:
+            continue
+        out.append(tok)
+    return frozenset(out)
+
+
+def _try_record_manual_result(
+    result: "UpgradeResult",
+    log_dir: "Optional[Path]",
+    argv: list[str],
+    started_at: str = "",
+) -> None:
+    """
+    If a batch record exists and *argv* matches a pending test, mark
+    that test as passed.  Silently skips if no record or no match.
+    Only called for successful results — failures are ignored.
+
+    Matching is order-insensitive: argv tokens are normalised to a
+    frozenset and compared against each test's full args frozenset.
+
+    :param result: Successful UpgradeResult from this run.
+    :param log_dir: Scenario log directory.
+    :param argv: sys.argv[1:] from this invocation.
+    :param started_at: ISO timestamp when the run started.
+    """
+    try:
+        import shlex
+        from util_batch import (
+            BATCH_RECORD_JSON, apply_result_to_test,
+            generate_html_report, load_record, save_record,
+        )
+
+        record = load_record(BATCH_RECORD_JSON)
+        if record is None:
+            return
+
+        manual_set = _normalize_argv(argv)
+
+        for test in record.tests:
+            if test.status not in ("pending", "running"):
+                continue
+            full = (record.base_args + " " + test.extra_args).strip()
+            batch_set = _normalize_argv(shlex.split(full, posix=False))
+            if batch_set != manual_set:
+                continue
+
+            apply_result_to_test(test, {
+                "success": True,
+                "log_dir": str(log_dir) if log_dir else "",
+                "version_before": result.version_before,
+                "version_after": result.version_after,
+                "expected_version": result.expected_version,
+                "elapsed_seconds": result.elapsed_seconds,
+                "message": result.message,
+                "started_at": started_at,
+                "finished_at": datetime.now().isoformat(timespec="seconds"),
+            })
+            save_record(record, BATCH_RECORD_JSON)
+            generate_html_report(
+                record,
+                BATCH_RECORD_JSON.parent / "batch_report.html",
+            )
+            log.info("Manual result mapped to batch test [%s]", test.id)
+            return
+    except Exception as exc:
+        log.debug("Could not map manual result to batch record: %s", exc)
 
 
 def _prompt_password(label: str) -> str:
@@ -710,10 +812,12 @@ def main() -> int:
     # Setup and continue commands don't need tenant validation
     if args.command == "setup":
         setup_logging(verbose=args.verbose)
+        log.info("main.py %s", " ".join(sys.argv[1:]))
         return cmd_setup(cfg)
 
     if args.command == "continue":
         setup_logging(verbose=args.verbose, file_logging=False)
+        log.info("main.py %s", " ".join(sys.argv[1:]))
         return cmd_continue(args)
 
     # Auto-detect tenant from local NSClient (if installed).
@@ -755,6 +859,7 @@ def main() -> int:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = LOG_DIR / f"upgrade_{timestamp}"
         setup_folder_logging(log_dir)
+    log.info("main.py %s", " ".join(sys.argv[1:]))
 
     # Validate config
     errors = validate_config(cfg, require_tenant=require_tenant)
