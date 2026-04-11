@@ -333,10 +333,12 @@ class TimingMonitor:
         poll_interval: float = POLL_INTERVAL,
         state: Optional[MonitorState] = None,
         log_dir: str = "",
+        skip_continue_task: bool = False,
     ) -> None:
         self._target_64_bit = target_64_bit
         self._timeout = timeout
         self._poll_interval = poll_interval
+        self._skip_continue_task = skip_continue_task
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -685,7 +687,13 @@ class TimingMonitor:
         self._state.pre_reboot_elapsed = elapsed
         save_monitor_state(self._state)
 
-        create_continue_task()
+        if self._skip_continue_task:
+            log.info(
+                "Skipping NsClientMonitorContinue task (batch mode — "
+                "NsClientBatchContinue handles post-reboot continuation)"
+            )
+        else:
+            create_continue_task()
 
         action = self._state.reboot_action
 

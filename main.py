@@ -458,6 +458,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         log_dir=log_dir,
         email_profiles=cfg.client.email_profiles,
         save_config_fn=lambda: save_config(cfg, args.config),
+        batch_mode=bool(args.result_file),
     )
 
     # Execute scenario

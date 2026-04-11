@@ -251,6 +251,8 @@ def register_batch_continue_task() -> None:
             "/tn", BATCH_TASK_NAME,
             "/tr", cmd_str,
             "/sc", "ONLOGON",
+            "/rl", "HIGHEST",
+            "/it",
             "/f",
         ],
         capture_output=True, text=True, timeout=30,

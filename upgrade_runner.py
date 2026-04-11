@@ -78,6 +78,7 @@ class UpgradeRunner:
         log_dir: Optional[Path] = None,
         email_profiles: Optional[dict[str, str]] = None,
         save_config_fn: Optional[Callable[[], None]] = None,
+        batch_mode: bool = False,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -113,6 +114,7 @@ class UpgradeRunner:
         self.stop_event = stop_event or threading.Event()
         self._upgrade_enabled = False
         self._log_dir: Optional[Path] = log_dir
+        self._batch_mode = batch_mode
 
         # Composed helpers
         self._installer = InstallerManager(
@@ -596,6 +598,7 @@ class UpgradeRunner:
             reboot_delay=self.reboot_delay,
             reboot_action=self.reboot_action,
             log_dir=str(self._log_dir) if self._log_dir else "",
+            skip_continue_task=self._batch_mode,
         )
         monitor.start()
 
