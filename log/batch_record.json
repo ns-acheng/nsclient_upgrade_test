@@ -19,13 +19,13 @@
     {
       "id": "32to64",
       "extra_args": "--target-64bit",
-      "status": "pass",
-      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_091656_from135.1_to137.0x64",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_142009_from135.1_to137.0x64",
       "version_before": "135.1.10.2611",
       "version_after": "137.0.0.2655 (64-bit)",
       "expected_version": "137.0.0.2655 (64-bit)",
       "elapsed_seconds": 616.373284816742,
-      "message": "Upgrade successful: 135.1.10.2611 -> 137.0.0.2655 (64-bit)",
+      "message": "stAgentMon was not upgraded (ENG-966207, ENG-972086)",
       "started_at": "2026-04-11T09:13:22",
       "finished_at": "2026-04-11T09:23:48",
       "critical_failure": false
@@ -47,15 +47,15 @@
     {
       "id": "64to64",
       "extra_args": "--target-64bit --source-64bit",
-      "status": "pass",
-      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_093813_from135.1_to137.0x64",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_142009_from135.1_to137.0x64",
       "version_before": "135.1.10.2611 (64-bit)",
       "version_after": "137.0.0.2655 (64-bit)",
       "expected_version": "137.0.0.2655 (64-bit)",
-      "elapsed_seconds": 676.9617125988007,
-      "message": "Upgrade successful: 135.1.10.2611 (64-bit) -> 137.0.0.2655 (64-bit)",
-      "started_at": "2026-04-11T09:34:28",
-      "finished_at": "2026-04-11T09:45:52",
+      "elapsed_seconds": 607.1171362400055,
+      "message": "stAgentMon was not upgraded (ENG-966207, ENG-972086)",
+      "started_at": "2026-04-11T14:16:59",
+      "finished_at": "2026-04-11T14:27:19",
       "critical_failure": false
     },
     {

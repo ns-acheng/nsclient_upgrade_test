@@ -552,13 +552,37 @@ def _print_result(result: UpgradeResult) -> None:
     if exe:
         exe_tag = "PASS" if exe.valid else "FAIL"
         lines.append(f"  Executables [{exe_tag}]:  dir={exe.install_dir}")
-        if exe.present:
-            lines.append(f"    Present:         {', '.join(exe.present)}")
-        if exe.missing:
-            lines.append(f"    MISSING:         {', '.join(exe.missing)}")
+        # Show required exes (exclude watchdog mon from this line)
+        required_present = [e for e in exe.present if e != "stAgentSvcMon.exe"]
+        required_missing = [e for e in exe.missing if e != "stAgentSvcMon.exe"]
+        if required_present:
+            lines.append(f"    Present:         {', '.join(required_present)}")
+        if required_missing:
+            lines.append(f"    MISSING:         {', '.join(required_missing)}")
         if exe.version_mismatches:
             for m in exe.version_mismatches:
-                lines.append(f"    MISMATCH:        {m}")
+                if "stAgentSvcMon.exe" not in m:
+                    lines.append(f"    MISMATCH:        {m}")
+        # Dedicated watchdog mon exe line
+        if exe.watchdog_mode:
+            mon_ver = next(
+                (m.split(": ")[1].split(" ")[0]
+                 for m in exe.version_mismatches if "stAgentSvcMon.exe" in m),
+                None,
+            )
+            if "stAgentSvcMon.exe" in exe.missing:
+                lines.append(f"    Watchdog mon:    [FAIL] stAgentSvcMon.exe MISSING")
+            elif mon_ver:
+                lines.append(f"    Watchdog mon:    [FAIL] stAgentSvcMon.exe version {mon_ver}")
+            else:
+                mon_path = Path(exe.install_dir) / "stAgentSvcMon.exe"
+                ver = LocalClient.get_file_version(mon_path) if mon_path.is_file() else ""
+                ver_str = f" (version {ver})" if ver else ""
+                lines.append(f"    Watchdog mon:    [PASS] stAgentSvcMon.exe{ver_str}")
+        else:
+            lines.append(f"    Watchdog mon:    not in watchdog mode")
+        if exe.stale_arch_files:
+            lines.append(f"    Old arch files:  {', '.join(exe.stale_arch_files)}")
     unreg = result.uninstall_entry
     if unreg:
         unreg_tag = "PASS" if unreg.found else "FAIL"

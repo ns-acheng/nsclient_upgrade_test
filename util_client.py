@@ -66,6 +66,7 @@ class ExeValidationResult:
     missing: list[str]
     version_mismatches: list[str]
     stale_arch_files: list[str] = field(default_factory=list)
+    watchdog_mode: bool = False
 
 
 @dataclass
@@ -696,6 +697,15 @@ class LocalClient:
         # display, but the actual executable ProductVersion is bare.
         clean_expected = expected_version.replace(" (64-bit)", "")
 
+        # Fall back to physical presence if nsconfig key is missing
+        if not watchdog and (install_dir / WATCHDOG_EXECUTABLE).is_file():
+            log.info(
+                "nsclient_watchdog_monitor not set in nsconfig but %s exists "
+                "— treating as watchdog mode",
+                WATCHDOG_EXECUTABLE,
+            )
+            watchdog = True
+
         exe_list = list(REQUIRED_EXECUTABLES)
         if watchdog:
             log.info(
@@ -740,6 +750,7 @@ class LocalClient:
             present=present,
             missing=missing,
             version_mismatches=version_mismatches,
+            watchdog_mode=watchdog,
         )
 
     @staticmethod

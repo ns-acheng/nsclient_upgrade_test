@@ -755,6 +755,8 @@ class UpgradeRunner:
                 "Could not detect config_name after sync — "
                 "API calls will target the default config"
             )
+        watchdog = LocalClient.is_watchdog_mode()
+        log.info("Watchdog mode: %s", watchdog)
 
     # ── Log folder & failure collection ──────────────────────────────
 
