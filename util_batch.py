@@ -8,6 +8,8 @@ import logging
 import shlex
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -146,7 +148,7 @@ def apply_result_to_test(test: TestRun, result: dict) -> None:
     test.version_after = result.get("version_after", "")
     test.expected_version = result.get("expected_version", "")
     test.elapsed_seconds = float(result.get("elapsed_seconds", 0.0))
-    test.message = result.get("message", "")
+    test.message = result.get("message", "")[:200]
     if result.get("started_at"):
         test.started_at = result["started_at"]
     test.finished_at = (
@@ -168,12 +170,15 @@ def run_test_subprocess(
     base_args: str,
     test: TestRun,
     result_file: Path,
+    stop_event: threading.Event | None = None,
 ) -> None:
     """
     Execute a single test by invoking ``main.py`` as a subprocess.
 
     For non-reboot tests: blocks until the subprocess finishes and
-    reads the result from *result_file*.
+    reads the result from *result_file*.  If *stop_event* is set while
+    the subprocess is running, the subprocess is terminated and the test
+    is marked as failed with message "Stopped by user".
 
     For reboot tests: the OS kills this process during the reboot,
     so this call does not return.  The batch continue task resumes
@@ -182,6 +187,7 @@ def run_test_subprocess(
     :param base_args: Base arg string (e.g. 'upgrade --target latest ...').
     :param test: TestRun to update in-place.
     :param result_file: Path where main.py writes the JSON result.
+    :param stop_event: Optional event; when set, the subprocess is terminated.
     """
     if result_file.exists():
         result_file.unlink()
@@ -198,7 +204,20 @@ def run_test_subprocess(
     log.info("Running [%s]: %s", test.id, " ".join(args_parts))
 
     try:
-        proc = subprocess.run(cmd)
+        proc = subprocess.Popen(cmd)
+        while proc.poll() is None:
+            if stop_event is not None and stop_event.is_set():
+                log.warning("Stop requested — terminating subprocess for [%s]", test.id)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                test.status = "fail"
+                test.message = "Stopped by user"
+                test.finished_at = datetime.now().isoformat(timespec="seconds")
+                return
+            time.sleep(0.5)
         result = read_result_file(result_file)
         if result:
             apply_result_to_test(test, result)
@@ -208,7 +227,7 @@ def run_test_subprocess(
     except Exception as exc:
         log.warning("Subprocess error for [%s]: %s", test.id, exc)
         test.status = "fail"
-        test.message = str(exc)
+        test.message = str(exc)[:200]
         test.finished_at = datetime.now().isoformat(timespec="seconds")
 
 

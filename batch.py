@@ -18,6 +18,7 @@ import argparse
 import logging
 import subprocess
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -39,6 +40,7 @@ from util_batch import (
     run_test_subprocess,
     save_record,
 )
+from util_input import start_input_monitor
 from util_log import setup_logging
 
 log = logging.getLogger(__name__)
@@ -97,11 +99,24 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
     launching the subprocess — if the machine reboots, the task
     fires after login and resumes via ``batch.py --continue``.
 
-    :return: 0 if all tests passed, 1 if any failed.
+    Starts an ESC key monitor; pressing ESC terminates the current
+    test subprocess and stops the batch.
+
+    :return: 0 if all tests passed, 1 if any failed or batch was stopped.
     """
     report_path = record_path.parent / "batch_report.html"
+    stop_event = threading.Event()
+    start_input_monitor(stop_event)
 
     while True:
+        if stop_event.is_set():
+            log.warning("Batch stopped by user (ESC).")
+            print("\nBatch stopped by user (ESC).")
+            record.finished_at = datetime.now().isoformat(timespec="seconds")
+            save_record(record, record_path)
+            generate_html_report(record, report_path)
+            return 1
+
         idx = _next_pending_index(record)
         if idx < 0:
             record.finished_at = datetime.now().isoformat(timespec="seconds")
@@ -125,7 +140,7 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
         if has_reboot(test.extra_args):
             register_batch_continue_task()
 
-        run_test_subprocess(record.base_args, test, result_file)
+        run_test_subprocess(record.base_args, test, result_file, stop_event)
         save_record(record, record_path)
         _print_test_result(test)
 
