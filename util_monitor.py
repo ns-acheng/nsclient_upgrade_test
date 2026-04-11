@@ -116,6 +116,10 @@ class MonitorState:
     scenario: str = ""
     source_64_bit: bool = False
 
+    # Original sys.argv[1:] from the manual main.py invocation — used by
+    # cmd_continue to map the post-reboot result back into the batch record.
+    original_argv: list[str] = field(default_factory=list)
+
 
 # ── State persistence ────────────────────────────────────────────────
 
@@ -344,6 +348,7 @@ class TimingMonitor:
         expected_version: str = "",
         scenario: str = "",
         source_64_bit: bool = False,
+        original_argv: list[str] | None = None,
     ) -> None:
         self._target_64_bit = target_64_bit
         self._timeout = timeout
@@ -378,6 +383,7 @@ class TimingMonitor:
                 expected_version=expected_version,
                 scenario=scenario,
                 source_64_bit=source_64_bit,
+                original_argv=original_argv or [],
             )
 
         # Build detector map: timing number -> detector method

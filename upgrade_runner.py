@@ -79,6 +79,7 @@ class UpgradeRunner:
         email_profiles: Optional[dict[str, str]] = None,
         save_config_fn: Optional[Callable[[], None]] = None,
         batch_mode: bool = False,
+        original_argv: Optional[list[str]] = None,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -115,6 +116,7 @@ class UpgradeRunner:
         self._upgrade_enabled = False
         self._log_dir: Optional[Path] = log_dir
         self._batch_mode = batch_mode
+        self._original_argv: list[str] = original_argv or []
         self._watchdog_mode: bool = False
 
         # Composed helpers
@@ -626,6 +628,7 @@ class UpgradeRunner:
             expected_version=expected_version,
             scenario=scenario,
             source_64_bit=self.source_64_bit,
+            original_argv=self._original_argv,
         )
         monitor.start()
 

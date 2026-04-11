@@ -67,6 +67,9 @@ class ExeValidationResult:
     version_mismatches: list[str]
     stale_arch_files: list[str] = field(default_factory=list)
     watchdog_mode: bool = False
+    processes_running: list[str] = field(default_factory=list)
+    processes_not_running: list[str] = field(default_factory=list)
+    stwatchdog_running: Optional[bool] = None   # None = not in watchdog mode
 
 
 @dataclass
@@ -428,6 +431,24 @@ class LocalClient:
             return False
 
     @staticmethod
+    def is_process_running(image_name: str) -> bool:
+        """
+        Check if a process is currently running by image name.
+
+        :param image_name: Executable name (e.g. 'stAgentSvc.exe').
+        :return: True if at least one instance is running.
+        """
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/NH"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return image_name.lower() in result.stdout.lower()
+        except Exception as exc:
+            log.debug("Process check for %s failed: %s", image_name, exc)
+            return False
+
+    @staticmethod
     def wait_for_service(
         service_name: str = "stAgentSvc",
         timeout: int = 60,
@@ -724,6 +745,8 @@ class LocalClient:
         present: list[str] = []
         missing: list[str] = []
         version_mismatches: list[str] = []
+        processes_running: list[str] = []
+        processes_not_running: list[str] = []
 
         for exe_name in exe_list:
             exe_path = install_dir / exe_name
@@ -744,6 +767,22 @@ class LocalClient:
             elif file_ver:
                 log.info("Verified %s version: %s", exe_name, file_ver)
 
+            if LocalClient.is_process_running(exe_name):
+                processes_running.append(exe_name)
+                log.info("Process running: %s", exe_name)
+            else:
+                processes_not_running.append(exe_name)
+                log.warning("Process not running: %s", exe_name)
+
+        # Check stwatchdog service when in watchdog mode
+        stwatchdog_running: Optional[bool] = None
+        if watchdog:
+            stwatchdog_running = LocalClient.is_service_running("stwatchdog")
+            if stwatchdog_running:
+                log.info("stwatchdog service is running")
+            else:
+                log.warning("stwatchdog service is NOT running")
+
         valid = len(missing) == 0 and len(version_mismatches) == 0
         if valid:
             log.info(
@@ -758,6 +797,9 @@ class LocalClient:
             missing=missing,
             version_mismatches=version_mismatches,
             watchdog_mode=watchdog,
+            processes_running=processes_running,
+            processes_not_running=processes_not_running,
+            stwatchdog_running=stwatchdog_running,
         )
 
     @staticmethod

@@ -322,6 +322,12 @@ def format_validation_issues(
                 "old arch files not cleaned: "
                 f"{', '.join(exe_validation.stale_arch_files)}"
             )
+    if exe_validation and exe_validation.processes_not_running:
+        issues.append(
+            f"process not running: {', '.join(exe_validation.processes_not_running)}"
+        )
+    if exe_validation and exe_validation.stwatchdog_running is False:
+        issues.append("stwatchdog service not running")
     if uninstall_entry and not uninstall_entry.found:
         issues.append("uninstall registry entry missing")
     if issues:

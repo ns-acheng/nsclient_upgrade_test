@@ -422,6 +422,8 @@ def cmd_continue(args: argparse.Namespace) -> int:
 
     if getattr(args, "result_file", None):
         _write_result_json(result, log_dir, args.result_file)
+    elif result.success and state.original_argv:
+        _try_record_manual_result(result, log_dir, state.original_argv)
 
     return 0 if result.success else 1
 
@@ -558,6 +560,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         email_profiles=cfg.client.email_profiles,
         save_config_fn=lambda: save_config(cfg, args.config),
         batch_mode=bool(args.result_file),
+        original_argv=sys.argv[1:],
     )
 
     # Execute scenario
@@ -662,6 +665,13 @@ def _print_result(result: UpgradeResult) -> None:
             for m in exe.version_mismatches:
                 if "stAgentSvcMon.exe" not in m:
                     lines.append(f"    MISMATCH:        {m}")
+        # Process running status for required exes
+        req_running = [e for e in exe.processes_running if e != "stAgentSvcMon.exe"]
+        req_not_running = [e for e in exe.processes_not_running if e != "stAgentSvcMon.exe"]
+        if req_running:
+            lines.append(f"    Running:         {', '.join(req_running)}")
+        if req_not_running:
+            lines.append(f"    Not running:     {', '.join(req_not_running)}")
         # Dedicated watchdog mon exe line
         if exe.watchdog_mode:
             mon_ver = next(
@@ -669,15 +679,22 @@ def _print_result(result: UpgradeResult) -> None:
                  for m in exe.version_mismatches if "stAgentSvcMon.exe" in m),
                 None,
             )
+            mon_running = "stAgentSvcMon.exe" in exe.processes_running
+            mon_proc = "running" if mon_running else "NOT running"
             if "stAgentSvcMon.exe" in exe.missing:
                 lines.append(f"    Watchdog mon:    [FAIL] stAgentSvcMon.exe MISSING")
             elif mon_ver:
-                lines.append(f"    Watchdog mon:    [FAIL] stAgentSvcMon.exe version {mon_ver}")
+                lines.append(f"    Watchdog mon:    [FAIL] stAgentSvcMon.exe version {mon_ver}, {mon_proc}")
             else:
                 mon_path = Path(exe.install_dir) / "stAgentSvcMon.exe"
                 ver = LocalClient.get_file_version(mon_path) if mon_path.is_file() else ""
                 ver_str = f" (version {ver})" if ver else ""
-                lines.append(f"    Watchdog mon:    [PASS] stAgentSvcMon.exe{ver_str}")
+                lines.append(f"    Watchdog mon:    [PASS] stAgentSvcMon.exe{ver_str}, {mon_proc}")
+            # stwatchdog service check
+            if exe.stwatchdog_running is not None:
+                svc_tag = "PASS" if exe.stwatchdog_running else "FAIL"
+                svc_state = "running" if exe.stwatchdog_running else "NOT running"
+                lines.append(f"    stwatchdog svc:  [{svc_tag}] {svc_state}")
         else:
             lines.append(f"    Watchdog mon:    not in watchdog mode")
         if exe.stale_arch_files:
