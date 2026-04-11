@@ -495,30 +495,30 @@
     {
       "id": "64to64_rb8",
       "extra_args": "--target-64bit --source-64bit --reboottime 8",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_212139",
+      "version_before": "unknown",
+      "version_after": "unknown",
+      "expected_version": "unknown",
+      "elapsed_seconds": 140.19072151184082,
+      "message": "Exception: msiexec failed (exit code 1603) (see C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_212139\\msiexec.log)",
+      "started_at": "2026-04-11T21:21:39",
+      "finished_at": "2026-04-11T21:24:05",
       "critical_failure": false
     },
     {
       "id": "32to32_rb9",
       "extra_args": "--reboottime 9",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_212646_from135.1_to137.0_reboottime_9",
+      "version_before": "135.1.10.2611",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655",
+      "elapsed_seconds": 187.73115277290344,
+      "message": "Upgrade successful: 135.1.10.2611 -> 137.0.0.2655 \u2014 ISSUES: exe version mismatch: stAgentSvcMon.exe: 135.1.10.2611 (expected 137.0.0.2655)",
+      "started_at": "2026-04-11T21:24:09",
+      "finished_at": "2026-04-11T21:27:33",
+      "critical_failure": true
     },
     {
       "id": "32to64_rb9",
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-11T21:18:15"
+  "finished_at": "2026-04-11T21:27:33"
 }

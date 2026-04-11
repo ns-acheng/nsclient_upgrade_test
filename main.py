@@ -26,7 +26,7 @@ from util_config import load_config, save_config, validate_config, ToolConfig
 from util_log import LOG_DIR, setup_logging, setup_folder_logging
 from util_secret import load_password, save_password, clear_password, cleanup_legacy_file
 from util_webui import WebUIClient
-from util_client import LocalClient
+from util_client import LocalClient, check_driver_install_log
 from upgrade_runner import UpgradeRunner, UpgradeResult
 
 log = logging.getLogger(__name__)
@@ -420,6 +420,12 @@ def cmd_continue(args: argparse.Namespace) -> int:
     result = _run_post_reboot_validation(state, completed)
     _print_result(result)
 
+    if not result.success:
+        LocalClient.collect_log_bundle(
+            state.target_64_bit or state.source_64_bit,
+            log_dir or LOG_DIR,
+        )
+
     if getattr(args, "result_file", None):
         _write_result_json(result, log_dir, args.result_file)
     elif result.success and state.original_argv:
@@ -491,6 +497,9 @@ def _run_post_reboot_validation(
     message += format_validation_issues(
         service_running, exe_validation, uninstall_entry,
     )
+    driver_note = check_driver_install_log(exe_validation, service_running)
+    if driver_note:
+        message += driver_note
     log.info("Post-reboot validation: %s", message)
 
     return UpgradeResult(
@@ -505,7 +514,7 @@ def _run_post_reboot_validation(
         service_running=service_running,
         exe_validation=exe_validation,
         uninstall_entry=uninstall_entry,
-        critical_failure=not validation_ok,
+        critical_failure=False if driver_note else not validation_ok,
     )
 
 

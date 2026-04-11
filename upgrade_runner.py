@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional
 from util_client import (
     LocalClient, SERVICES,
     ExeValidationResult, UninstallEntryResult,
+    check_driver_install_log,
 )
 from util_config import UpgradeConfig
 from util_installer import (
@@ -254,6 +255,9 @@ class UpgradeRunner:
             message += format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
             )
+            driver_note = check_driver_install_log(exe_validation, service_running)
+            if driver_note:
+                message += driver_note
             log.info(message)
 
             result = UpgradeResult(
@@ -268,7 +272,7 @@ class UpgradeRunner:
                 service_running=service_running,
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
-                critical_failure=not validation_ok,
+                critical_failure=False if driver_note else not validation_ok,
             )
             if not result.success:
                 self._collect_failure_logs()
@@ -430,6 +434,9 @@ class UpgradeRunner:
             message += format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
             )
+            driver_note = check_driver_install_log(exe_validation, service_running)
+            if driver_note:
+                message += driver_note
             log.info(message)
 
             result = UpgradeResult(
@@ -444,7 +451,7 @@ class UpgradeRunner:
                 service_running=service_running,
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
-                critical_failure=not validation_ok,
+                critical_failure=False if driver_note else not validation_ok,
             )
             if not result.success:
                 self._collect_failure_logs()

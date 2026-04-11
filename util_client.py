@@ -1032,3 +1032,58 @@ class LocalClient:
         except Exception as exc:
             log.error("Error during crash handling: %s", exc)
 
+
+# ── Installation log helpers ────────────────────────────────────────────
+
+_NS_INSTALLATION_LOG = Path(
+    r"C:\ProgramData\netskope\stagent\logs\nsInstallation.log"
+)
+
+
+def scan_installation_log(pattern: str) -> list[str]:
+    """
+    Scan nsInstallation.log for lines matching *pattern* (case-insensitive).
+
+    :return: List of matching lines (stripped), or [] if file is missing.
+    """
+    if not _NS_INSTALLATION_LOG.is_file():
+        return []
+    try:
+        text = _NS_INSTALLATION_LOG.read_text(encoding="utf-8", errors="replace")
+        pat = pattern.lower()
+        return [line.strip() for line in text.splitlines() if pat in line.lower()]
+    except Exception as exc:
+        log.warning("Failed to scan nsInstallation.log: %s", exc)
+        return []
+
+
+def check_driver_install_log(
+    exe_validation: ExeValidationResult,
+    service_running: bool,
+) -> str:
+    """
+    When exe version mismatches exist but services are still running,
+    scan nsInstallation.log for "driverinstall failed" entries.
+
+    :return: Message fragment like ' — driverinstall failure: ...',
+             or empty string if the condition is not met or no match found.
+    """
+    if not service_running:
+        return ""
+    if not exe_validation or not exe_validation.version_mismatches:
+        return ""
+    matches = scan_installation_log("driverinstall failed")
+    if not matches:
+        return ""
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for line in matches:
+        if line and line not in seen:
+            seen.add(line)
+            unique.append(line)
+    note = "; ".join(unique)
+    if len(note) > 150:
+        note = note[:147] + "..."
+    log.warning("Driver install failure found in nsInstallation.log: %s", note)
+    return f" — driverinstall failure: {note}"
