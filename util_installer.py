@@ -190,16 +190,30 @@ class InstallerManager:
                 installed_version, service_running, msi_version,
             )
             if installed_version == msi_version and service_running:
+                if self.client.verify_install_dir(self.source_64_bit):
+                    log.info(
+                        "Installed version matches base MSI and running "
+                        "— skipping install"
+                    )
+                    return
                 log.info(
-                    "Installed version matches base MSI and running "
-                    "— skipping install"
+                    "Version matches but wrong arch (expected %s-bit) "
+                    "— uninstalling",
+                    "64" if self.source_64_bit else "32",
                 )
-                return
+                needs_uninstall = True
             elif installed_version == msi_version:
-                log.info(
-                    "Same version but not running — uninstalling "
-                    "before reinstall"
-                )
+                if not self.client.verify_install_dir(self.source_64_bit):
+                    log.info(
+                        "Version matches but wrong arch (expected %s-bit) "
+                        "— uninstalling",
+                        "64" if self.source_64_bit else "32",
+                    )
+                else:
+                    log.info(
+                        "Same version but not running — uninstalling "
+                        "before reinstall"
+                    )
                 needs_uninstall = True
             else:
                 log.info(
