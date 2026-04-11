@@ -159,15 +159,15 @@
     {
       "id": "64to64_rb2",
       "extra_args": "--target-64bit --source-64bit --reboottime 2",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "started_at": "2026-04-11T23:37:58",
+      "finished_at": "2026-04-11T23:41:10",
       "critical_failure": false
     },
     {
@@ -215,14 +215,14 @@
     {
       "id": "64to64_rb3",
       "extra_args": "--target-64bit --source-64bit --reboottime 3",
-      "status": "pending",
+      "status": "running",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "",
-      "started_at": "",
+      "started_at": "2026-04-11T23:41:11",
       "finished_at": "",
       "critical_failure": false
     },
