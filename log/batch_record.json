@@ -117,7 +117,7 @@
     {
       "id": "32to32_rb2",
       "extra_args": "--reboottime 2",
-      "status": "running",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
@@ -125,7 +125,7 @@
       "elapsed_seconds": 0.0,
       "message": "",
       "started_at": "2026-04-12T03:19:50",
-      "finished_at": "",
+      "finished_at": "2026-04-12T03:22:44",
       "critical_failure": false
     },
     {
@@ -159,15 +159,15 @@
     {
       "id": "64to64_rb2",
       "extra_args": "--target-64bit --source-64bit --reboottime 2",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "pass",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260412_032237_from135.1_to137.0_reboottime_2",
+      "version_before": "135.1.10.2611",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "Upgrade successful: 135.1.10.2611 -> 137.0.0.2655",
+      "started_at": "2026-04-12T03:22:45",
+      "finished_at": "2026-04-12T03:24:30",
       "critical_failure": false
     },
     {
@@ -257,30 +257,30 @@
     {
       "id": "64to32_rb4",
       "extra_args": "--source-64bit --reboottime 4",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260412_032729_from137.0_to137.0_reboottime_4",
+      "version_before": "137.0.0.2655",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "message": "Post-reboot checks failed: 137.0.0.2655 -> 137.0.0.2655 \u2014 ISSUES: missing exe: stAgentSvcMon.exe, old arch files not cleaned: stAgentSvcMon.exe",
+      "started_at": "2026-04-12T03:24:30",
+      "finished_at": "2026-04-12T03:29:44",
+      "critical_failure": true
     },
     {
       "id": "64to64_rb4",
       "extra_args": "--target-64bit --source-64bit --reboottime 4",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260412_033232_from137.0_to137.0x64_reboottime_4",
+      "version_before": "137.0.0.2655",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655 (64-bit)",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "message": "Post-reboot monitor timed out \u2014 upgrade may not have finished \u2014 ISSUES: missing exe: stAgentSvc.exe, stAgentUI.exe",
+      "started_at": "2026-04-12T03:29:44",
+      "finished_at": "2026-04-12T03:49:23",
+      "critical_failure": true
     },
     {
       "id": "32to32_rb5",
@@ -299,29 +299,29 @@
     {
       "id": "32to64_rb5",
       "extra_args": "--target-64bit --reboottime 5",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260412_035209_from137.0_to137.0x64_reboottime_5",
+      "version_before": "137.0.0.2655 (64-bit)",
+      "version_after": "135.1.10.2611",
+      "expected_version": "137.0.0.2655 (64-bit)",
+      "elapsed_seconds": 1063.6834182739258,
+      "message": "Upgrade FAILED: expected 137.0.0.2655 (64-bit), got 135.1.10.2611 \u2014 ISSUES: missing exe: stAgentSvc.exe, stAgentUI.exe, stAgentSvcMon.exe, old arch files not cleaned: stAgentSvc.exe, stAgentUI.exe, st",
+      "started_at": "2026-04-12T03:49:27",
+      "finished_at": "2026-04-12T04:07:28",
+      "critical_failure": true
     },
     {
       "id": "64to32_rb5",
       "extra_args": "--source-64bit --reboottime 5",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "Stopped by user",
+      "started_at": "2026-04-12T06:37:39",
+      "finished_at": "2026-04-12T06:38:11",
       "critical_failure": false
     },
     {
@@ -355,14 +355,14 @@
     {
       "id": "32to64_rb6",
       "extra_args": "--target-64bit --reboottime 6",
-      "status": "pending",
+      "status": "running",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "",
-      "started_at": "",
+      "started_at": "2026-04-12T06:38:40",
       "finished_at": "",
       "critical_failure": false
     },
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-12T03:14:56"
+  "finished_at": "2026-04-12T06:38:11"
 }
