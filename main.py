@@ -735,8 +735,6 @@ def _try_record_manual_result(
         manual_set = _normalize_argv(argv)
 
         for test in record.tests:
-            if test.status not in ("pending", "running"):
-                continue
             full = (record.base_args + " " + test.extra_args).strip()
             batch_set = _normalize_argv(shlex.split(full, posix=False))
             if batch_set != manual_set:
