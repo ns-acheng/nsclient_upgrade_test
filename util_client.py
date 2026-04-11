@@ -353,6 +353,12 @@ class LocalClient:
                 result.returncode, result.stderr,
             )
             if attempt == 1:
+                if result.returncode == 1603:
+                    log.warning("Exit code 1603 — killing msiexec.exe before retry")
+                    subprocess.run(
+                        ["taskkill", "/f", "/im", "msiexec.exe"],
+                        capture_output=True,
+                    )
                 log.info("Retrying uninstall in 10 seconds...")
                 time.sleep(10)
         raise RuntimeError(
