@@ -168,6 +168,12 @@ def has_reboot(extra_args: str) -> bool:
     return "--reboottime" in extra_args
 
 
+def _is_reboot_pending() -> bool:
+    """Return True if monitor_state.json exists (reboot was triggered)."""
+    from util_monitor import MONITOR_STATE_PATH
+    return MONITOR_STATE_PATH.is_file()
+
+
 def run_test_subprocess(
     base_args: str,
     test: TestRun,
@@ -220,6 +226,15 @@ def run_test_subprocess(
         result = read_result_file(result_file)
         if result:
             apply_result_to_test(test, result)
+        elif _is_reboot_pending():
+            # The subprocess was killed by Windows shutdown after the
+            # monitor triggered a reboot.  Keep status as "running" so
+            # batch.py --continue picks it up after the machine restarts.
+            log.info(
+                "Reboot pending for [%s] — keeping status 'running' "
+                "for post-reboot continuation",
+                test.id,
+            )
         else:
             test.status = "pass" if proc.returncode == 0 else "fail"
             test.finished_at = datetime.now().isoformat(timespec="seconds")
