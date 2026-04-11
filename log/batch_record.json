@@ -355,15 +355,15 @@
     {
       "id": "32to64_rb6",
       "extra_args": "--target-64bit --reboottime 6",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "Stopped by user",
+      "started_at": "2026-04-11T18:07:04",
+      "finished_at": "2026-04-11T18:10:21",
       "critical_failure": false
     },
     {
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-11T17:43:49"
+  "finished_at": "2026-04-11T18:10:21"
 }

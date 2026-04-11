@@ -4,5 +4,8 @@
     },
 	"acheng2.qa.boomskope.com": {
         "installer_name": "NSClient_addon-acheng2.qa.boomskope.com_9675_z858yu787mheXXB1Tt1I"
+    },
+    "asu-02.stg.boomskope.com": {
+        "installer_name": "NSClient_addon-asu-02.stg.boomskope.com_33628_aUBmKOb4gdR7W3aJ2ehU"
     }
 }
