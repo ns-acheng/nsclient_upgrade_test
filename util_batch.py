@@ -194,9 +194,6 @@ def run_test_subprocess(
     if result_file.exists():
         result_file.unlink()
 
-    test.status = "running"
-    test.started_at = datetime.now().isoformat(timespec="seconds")
-
     args_parts = shlex.split(base_args, posix=False)
     if test.extra_args:
         args_parts += shlex.split(test.extra_args, posix=False)

@@ -202,7 +202,11 @@ class UpgradeRunner:
 
             # Start monitor before sync loop so it can detect
             # timing 1 (config sync) and timing 2 (MSI download)
-            monitor = self._start_monitor()
+            monitor = self._start_monitor(
+                version_before=version_before,
+                expected_version=expected,
+                scenario=scenario,
+            )
             self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
@@ -374,7 +378,11 @@ class UpgradeRunner:
 
             # Start monitor before sync loop so it can detect
             # timing 1 (config sync) and timing 2 (MSI download)
-            monitor = self._start_monitor()
+            monitor = self._start_monitor(
+                version_before=version_before,
+                expected_version=expected,
+                scenario=scenario,
+            )
             self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
@@ -598,7 +606,12 @@ class UpgradeRunner:
 
     # ── Timing Monitor ───────────────────────────────────────────────
 
-    def _start_monitor(self) -> Any:
+    def _start_monitor(
+        self,
+        version_before: str = "",
+        expected_version: str = "",
+        scenario: str = "",
+    ) -> Any:
         """Start timing monitor for upgrade lifecycle detection."""
         from util_monitor import TimingMonitor
 
@@ -609,6 +622,10 @@ class UpgradeRunner:
             reboot_action=self.reboot_action,
             log_dir=str(self._log_dir) if self._log_dir else "",
             skip_continue_task=self._batch_mode,
+            version_before=version_before,
+            expected_version=expected_version,
+            scenario=scenario,
+            source_64_bit=self.source_64_bit,
         )
         monitor.start()
 

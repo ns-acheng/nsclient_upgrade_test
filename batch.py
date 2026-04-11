@@ -140,6 +140,15 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
         if has_reboot(test.extra_args):
             register_batch_continue_task()
 
+        # Persist "running" status to disk BEFORE launching the subprocess.
+        # If the machine reboots during the test, batch.py is killed and
+        # save_record() below never runs — the disk copy would still show
+        # "pending" and batch.py --continue would re-run the test from
+        # scratch instead of resuming it.
+        test.status = "running"
+        test.started_at = datetime.now().isoformat(timespec="seconds")
+        save_record(record, record_path)
+
         run_test_subprocess(record.base_args, test, result_file, stop_event)
         save_record(record, record_path)
         _print_test_result(test)

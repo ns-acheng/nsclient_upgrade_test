@@ -384,7 +384,7 @@ def cmd_status(cfg: ToolConfig) -> int:
 
 
 def cmd_continue(args: argparse.Namespace) -> int:
-    """Resume timing monitor after reboot."""
+    """Resume timing monitor after reboot, then run post-upgrade validation."""
     from util_monitor import (
         TimingMonitor, load_monitor_state, clear_monitor_state,
         delete_continue_task,
@@ -395,7 +395,7 @@ def cmd_continue(args: argparse.Namespace) -> int:
         print("Error: No monitor state file found. Nothing to continue.")
         return 1
 
-    # Reuse the same log folder from before reboot (feature b)
+    log_dir: Path | None = None
     if state.log_dir:
         log_dir = Path(state.log_dir)
         setup_folder_logging(log_dir, log_filename="upgrade_continue.log")
@@ -416,10 +416,109 @@ def cmd_continue(args: argparse.Namespace) -> int:
     clear_monitor_state()
     delete_continue_task()
 
-    if getattr(args, "result_file", None):
-        _write_continue_result_json(completed, log_dir, args.result_file)
+    # Post-reboot validation: service, exe, registry, version comparison
+    result = _run_post_reboot_validation(state, completed)
+    _print_result(result)
 
-    return 0 if completed else 1
+    if getattr(args, "result_file", None):
+        _write_result_json(result, log_dir, args.result_file)
+
+    return 0 if result.success else 1
+
+
+def _run_post_reboot_validation(
+    state: "MonitorState",
+    completed: bool,
+) -> "UpgradeResult":
+    """
+    Run local post-upgrade checks after a reboot-based upgrade.
+
+    Does not require a WebUI connection — all checks are local.
+    webui_version is left empty since no tenant credentials are available.
+
+    :param state: Saved monitor state (carries version_before, expected_version, etc.).
+    :param completed: Whether wait_for_upgrade_complete() returned True.
+    :return: UpgradeResult with full validation details.
+    """
+    from util_client import LocalClient
+    from upgrade_runner import UpgradeResult
+    from util_verify import format_validation_issues
+
+    # Version after: read from local exe, fall back to registry
+    version_after = _get_local_version(state.target_64_bit)
+
+    service_running = LocalClient.is_service_running()
+
+    client = LocalClient(platform="windows")
+    exe_validation = client.verify_executables(
+        is_64_bit=state.target_64_bit,
+        expected_version=version_after,
+    )
+    if state.source_64_bit != state.target_64_bit:
+        stale = LocalClient.check_old_arch_cleanup(
+            state.source_64_bit, state.target_64_bit,
+        )
+        exe_validation.stale_arch_files = stale
+        if stale:
+            exe_validation.valid = False
+
+    uninstall_entry = client.check_uninstall_registry()
+    validation_ok = exe_validation.valid and uninstall_entry.found
+
+    version_ok = (
+        not state.expected_version
+        or version_after == state.expected_version
+    )
+    success = completed and service_running and version_ok and validation_ok
+
+    if not completed:
+        message = "Post-reboot monitor timed out — upgrade may not have finished"
+    elif not version_ok:
+        message = (
+            f"Upgrade FAILED: expected {state.expected_version}, "
+            f"got {version_after}"
+        )
+    elif success:
+        message = (
+            f"Upgrade successful: {state.version_before} -> {version_after}"
+        )
+    else:
+        message = (
+            f"Post-reboot checks failed: {state.version_before} -> {version_after}"
+        )
+    message += format_validation_issues(
+        service_running, exe_validation, uninstall_entry,
+    )
+    log.info("Post-reboot validation: %s", message)
+
+    return UpgradeResult(
+        success=success,
+        scenario=state.scenario or "continue",
+        version_before=state.version_before,
+        version_after=version_after,
+        expected_version=state.expected_version,
+        webui_version="",
+        elapsed_seconds=0.0,
+        message=message,
+        service_running=service_running,
+        exe_validation=exe_validation,
+        uninstall_entry=uninstall_entry,
+        critical_failure=not validation_ok,
+    )
+
+
+def _get_local_version(target_64_bit: bool) -> str:
+    """Read installed version from the local stAgentSvc.exe or registry."""
+    from util_client import LocalClient
+    for is_64, suffix in [(True, " (64-bit)"), (False, "")]:
+        install_dir = LocalClient.get_install_dir(is_64)
+        exe = install_dir / "stAgentSvc.exe"
+        if exe.is_file():
+            ver = LocalClient.get_file_version(exe)
+            if ver:
+                return f"{ver}{suffix}" if suffix else ver
+    reg = LocalClient.check_uninstall_registry()
+    return reg.display_version if reg.found else "unknown"
 
 
 def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
@@ -643,56 +742,6 @@ def _write_result_json(
         log.info("Result written to %s", path)
     except Exception as exc:
         log.warning("Failed to write result file: %s", exc)
-
-
-def _write_continue_result_json(
-    completed: bool,
-    log_dir: "Optional[Path]",
-    path: str,
-    started_at: str = "",
-) -> None:
-    """
-    Write a post-reboot continue result JSON for the batch runner.
-
-    :param completed: Whether wait_for_upgrade_complete() returned True.
-    :param log_dir: The scenario log directory.
-    :param path: File path to write.
-    :param started_at: ISO timestamp when the original test started.
-    """
-    import json as _json
-    version_after = ""
-    try:
-        reg = LocalClient.check_uninstall_registry()
-        if reg.found:
-            version_after = reg.display_version
-    except Exception:
-        pass
-    service_ok = LocalClient.is_service_running()
-    success = completed and service_ok
-    data = {
-        "success": success,
-        "scenario": "continue",
-        "version_before": "",
-        "version_after": version_after,
-        "expected_version": "",
-        "webui_version": "",
-        "elapsed_seconds": 0.0,
-        "log_dir": str(log_dir) if log_dir else "",
-        "started_at": started_at,
-        "finished_at": datetime.now().isoformat(timespec="seconds"),
-        "message": (
-            f"Post-reboot upgrade complete (version={version_after})"
-            if success
-            else "Post-reboot upgrade timed out or service not running"
-        ),
-    }
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            _json.dump(data, f, indent=2)
-            f.write("\n")
-        log.info("Continue result written to %s", path)
-    except Exception as exc:
-        log.warning("Failed to write continue result file: %s", exc)
 
 
 # Flags to strip when matching manual argv against batch test args.

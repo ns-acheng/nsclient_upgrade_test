@@ -110,6 +110,12 @@ class MonitorState:
     initial_allow_auto_update: bool = False
     initial_msi_size: int = 0
 
+    # Context for post-reboot validation (set by upgrade runner)
+    version_before: str = ""
+    expected_version: str = ""
+    scenario: str = ""
+    source_64_bit: bool = False
+
 
 # ── State persistence ────────────────────────────────────────────────
 
@@ -334,6 +340,10 @@ class TimingMonitor:
         state: Optional[MonitorState] = None,
         log_dir: str = "",
         skip_continue_task: bool = False,
+        version_before: str = "",
+        expected_version: str = "",
+        scenario: str = "",
+        source_64_bit: bool = False,
     ) -> None:
         self._target_64_bit = target_64_bit
         self._timeout = timeout
@@ -364,6 +374,10 @@ class TimingMonitor:
                 initial_log_mtime=None,
                 initial_install_dir="",
                 log_dir=log_dir,
+                version_before=version_before,
+                expected_version=expected_version,
+                scenario=scenario,
+                source_64_bit=source_64_bit,
             )
 
         # Build detector map: timing number -> detector method
