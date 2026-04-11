@@ -124,7 +124,7 @@
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "",
-      "started_at": "2026-04-12T03:08:08",
+      "started_at": "2026-04-12T03:19:50",
       "finished_at": "",
       "critical_failure": false
     },
@@ -145,16 +145,16 @@
     {
       "id": "64to32_rb2",
       "extra_args": "--source-64bit --reboottime 2",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260412_031143_from132.0_to137.0_reboottime_2",
+      "version_before": "132.0.13.2525",
+      "version_after": "132.0.13.2525",
+      "expected_version": "137.0.0.2655",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "message": "Upgrade FAILED: expected 137.0.0.2655, got 132.0.13.2525 \u2014 ISSUES: service not running, exe version mismatch: stAgentSvcMon.exe: 136.1.0.2622 (expected 132.0.13.2525), process not running: stAgentSvc.",
+      "started_at": "2026-04-12T03:11:51",
+      "finished_at": "2026-04-12T03:14:28",
+      "critical_failure": true
     },
     {
       "id": "64to64_rb2",
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-12T02:38:12"
+  "finished_at": "2026-04-12T03:14:56"
 }
