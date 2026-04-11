@@ -599,6 +599,7 @@ def _write_result_json(
     import json as _json
     data = {
         "success": result.success,
+        "critical_failure": result.critical_failure,
         "scenario": result.scenario,
         "version_before": result.version_before,
         "version_after": result.version_after,

@@ -50,6 +50,7 @@ class UpgradeResult:
     service_running: bool = True
     exe_validation: Optional[ExeValidationResult] = None
     uninstall_entry: Optional[UninstallEntryResult] = None
+    critical_failure: bool = False
 
 
 class UpgradeRunner:
@@ -255,6 +256,7 @@ class UpgradeRunner:
                 service_running=service_running,
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
+                critical_failure=not validation_ok,
             )
             if not result.success:
                 self._collect_failure_logs()
@@ -423,6 +425,7 @@ class UpgradeRunner:
                 service_running=service_running,
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
+                critical_failure=not validation_ok,
             )
             if not result.success:
                 self._collect_failure_logs()
@@ -557,6 +560,7 @@ class UpgradeRunner:
                 service_running=service_running,
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
+                critical_failure=not validation_ok,
             )
             if not result.success:
                 self._collect_failure_logs()

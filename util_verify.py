@@ -280,6 +280,13 @@ class UpgradeVerifier:
                 exe_validation.version_mismatches,
             )
 
+        # Arch change cleanup check (32→64 or 64→32)
+        if self.source_64_bit != use_64:
+            stale = LocalClient.check_old_arch_cleanup(self.source_64_bit, use_64)
+            exe_validation.stale_arch_files = stale
+            if stale:
+                exe_validation.valid = False
+
         uninstall_entry = self.client.check_uninstall_registry()
         if not uninstall_entry.found:
             log.warning(
@@ -309,6 +316,11 @@ def format_validation_issues(
             issues.append(
                 "exe version mismatch: "
                 f"{', '.join(exe_validation.version_mismatches)}"
+            )
+        if exe_validation.stale_arch_files:
+            issues.append(
+                "old arch files not cleaned: "
+                f"{', '.join(exe_validation.stale_arch_files)}"
             )
     if uninstall_entry and not uninstall_entry.found:
         issues.append("uninstall registry entry missing")

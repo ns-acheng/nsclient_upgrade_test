@@ -1279,15 +1279,15 @@
     {
       "id": "64to32_rb8_a3",
       "extra_args": "--source-64bit --reboottime 8 --action 3",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": ""
+      "message": "Stopped by user",
+      "started_at": "2026-04-11T12:05:05",
+      "finished_at": "2026-04-11T12:12:34"
     },
     {
       "id": "64to64_rb8_a3",
@@ -2084,5 +2084,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": ""
+  "finished_at": "2026-04-11T12:12:34"
 }

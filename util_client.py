@@ -65,6 +65,7 @@ class ExeValidationResult:
     present: list[str]
     missing: list[str]
     version_mismatches: list[str]
+    stale_arch_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -697,6 +698,10 @@ class LocalClient:
 
         exe_list = list(REQUIRED_EXECUTABLES)
         if watchdog:
+            log.info(
+                "Watchdog mode enabled — verifying %s in %s",
+                WATCHDOG_EXECUTABLE, install_dir,
+            )
             exe_list.append(WATCHDOG_EXECUTABLE)
 
         present: list[str] = []
@@ -736,6 +741,35 @@ class LocalClient:
             missing=missing,
             version_mismatches=version_mismatches,
         )
+
+    @staticmethod
+    def check_old_arch_cleanup(source_64_bit: bool, target_64_bit: bool) -> list[str]:
+        """
+        Check for leftover NSClient executables in the old arch install dir
+        after an arch-changing upgrade (32→64 or 64→32).
+
+        :param source_64_bit: Arch of the original install.
+        :param target_64_bit: Arch of the upgrade target.
+        :return: List of leftover exe names still present in the old dir.
+                 Empty if no arch change or the old dir is already clean.
+        """
+        if source_64_bit == target_64_bit:
+            return []
+        old_dir = LocalClient.get_install_dir(source_64_bit)
+        old_arch = "64" if source_64_bit else "32"
+        all_exes = list(REQUIRED_EXECUTABLES) + [WATCHDOG_EXECUTABLE]
+        leftover = [exe for exe in all_exes if (old_dir / exe).is_file()]
+        if leftover:
+            log.warning(
+                "Arch change cleanup: old %s-bit dir %s still contains: %s",
+                old_arch, old_dir, leftover,
+            )
+        else:
+            log.info(
+                "Arch change cleanup: old %s-bit dir is clean: %s",
+                old_arch, old_dir,
+            )
+        return leftover
 
     @staticmethod
     def check_uninstall_registry() -> UninstallEntryResult:

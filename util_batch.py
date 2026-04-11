@@ -41,6 +41,7 @@ class TestRun:
     message: str = ""
     started_at: str = ""
     finished_at: str = ""
+    critical_failure: bool = False
 
 
 @dataclass
@@ -149,6 +150,7 @@ def apply_result_to_test(test: TestRun, result: dict) -> None:
     test.expected_version = result.get("expected_version", "")
     test.elapsed_seconds = float(result.get("elapsed_seconds", 0.0))
     test.message = result.get("message", "")[:200]
+    test.critical_failure = bool(result.get("critical_failure", False))
     if result.get("started_at"):
         test.started_at = result["started_at"]
     test.finished_at = (
