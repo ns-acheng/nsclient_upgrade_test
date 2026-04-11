@@ -13,7 +13,7 @@ from typing import Any, Callable, Optional
 
 from util_client import (
     LocalClient, SERVICES,
-    ExeValidationResult, UninstallEntryResult,
+    ExeValidationResult, UninstallEntryResult, UninstallCriticalError,
     check_driver_install_log,
 )
 from util_config import UpgradeConfig
@@ -299,6 +299,7 @@ class UpgradeRunner:
                 elapsed_seconds=elapsed,
                 message=f"Exception: {exc}",
                 service_running=False,
+                critical_failure=isinstance(exc, UninstallCriticalError),
             )
         finally:
             self._cleanup()
@@ -484,6 +485,7 @@ class UpgradeRunner:
                 elapsed_seconds=elapsed,
                 message=f"Exception: {exc}",
                 service_running=False,
+                critical_failure=isinstance(exc, UninstallCriticalError),
             )
         finally:
             self._cleanup()
@@ -622,6 +624,7 @@ class UpgradeRunner:
                 elapsed_seconds=elapsed,
                 message=f"Exception: {exc}",
                 service_running=False,
+                critical_failure=isinstance(exc, UninstallCriticalError),
             )
         finally:
             self._cleanup()

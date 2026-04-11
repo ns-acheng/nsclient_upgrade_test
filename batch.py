@@ -11,7 +11,7 @@ Usage:
 Options:
     --batch  PATH    Batch definition JSON  (default: data/batch.json)
     --record PATH    Batch record JSON      (default: log/batch_record.json)
-    --retry-unknown  Reset failed tests with empty/unknown version_before to pending
+    --retry-unknown  Reset failed tests with empty/unknown/N/A version_before to pending
     -v               Verbose logging
 """
 
@@ -272,8 +272,10 @@ def _reset_tests(
     :param retry_failed: Reset every test whose status is ``fail``.
     :param retry_ids: Reset tests whose id is in this list (any status).
     :param retry_unknown_version: Reset failed tests whose ``version_before``
-                                  is empty or ``"unknown"`` — indicates the
-                                  test never reached the upgrade phase.
+                                  is empty, ``"unknown"``, or ``"N/A"`` —
+                                  indicates the test failed before or during
+                                  base MSI installation and never reached the
+                                  upgrade phase.
     :return: Number of tests reset.
     """
     ids = set(retry_ids or [])
@@ -282,7 +284,7 @@ def _reset_tests(
         unknown_ver = (
             retry_unknown_version
             and test.status == "fail"
-            and test.version_before in ("", "unknown")
+            and test.version_before in ("", "unknown", "N/A")
         )
         if (retry_failed and test.status == "fail") or test.id in ids or unknown_ver:
             _reset_test(test)
@@ -480,8 +482,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--retry-unknown", dest="retry_unknown", action="store_true",
-        help="Reset failed tests with empty/unknown version_before to pending "
-             "(failed before reaching the upgrade phase)",
+        help="Reset failed tests with empty/unknown/N/A version_before to "
+             "pending (failed before or during base MSI installation)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser

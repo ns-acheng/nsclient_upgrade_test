@@ -85,6 +85,10 @@ log/                 # Log output
 - **Mock all I/O**: file system, network, and OS calls
 - **No admin privileges** required to run tests
 - Run: `python -m pytest test/ -v`
+- **Never write or update tests alongside code changes.** When code changes
+  create UT gaps, add a plan entry to `test/ut_backlog.md` instead. UT
+  updates are batched and done separately only after the user confirms the
+  code works.
 
 ## Error Handling
 

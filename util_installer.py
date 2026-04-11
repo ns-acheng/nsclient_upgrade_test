@@ -191,7 +191,7 @@ class InstallerManager:
 
         if needs_uninstall:
             _start_email_thread()
-            self.client.uninstall_msi(uninstall_info.product_code)
+            self.client.uninstall_msi(uninstall_info.product_code, log_dir=self.log_dir)
             time.sleep(10)
 
         # Step 4: Full install flow

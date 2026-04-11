@@ -21,6 +21,10 @@ from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
+
+class UninstallCriticalError(RuntimeError):
+    """Raised when msiexec /x fails with a critical error (e.g. 1603)."""
+
 # Install directories
 INSTALL_DIR_32 = Path(r"C:\Program Files (x86)\Netskope\STAgent")
 INSTALL_DIR_64 = Path(r"C:\Program Files\Netskope\STAgent")
@@ -333,20 +337,30 @@ class LocalClient:
         log.info("Client uninstalled")
 
     @staticmethod
-    def uninstall_msi(product_code: str) -> None:
+    def uninstall_msi(
+        product_code: str,
+        log_dir: Optional[Path] = None,
+    ) -> None:
         """
         Uninstall the client using ``msiexec /x`` with a product code.
 
-        Retries once after 10 seconds on failure. Raises RuntimeError
-        if both attempts fail.
+        Retries once after 10 seconds on failure. Raises
+        :class:`UninstallCriticalError` if the last exit code is 1603,
+        or :class:`RuntimeError` for other failures.
 
         :param product_code: Registry subkey name (e.g. '{GUID}' or 'NetskopeClient').
-        :raises RuntimeError: If uninstall fails on both attempts.
+        :param log_dir: Directory for the msiexec uninstall log.
+        :raises UninstallCriticalError: If uninstall fails with exit code 1603.
+        :raises RuntimeError: If uninstall fails on both attempts (non-1603).
         """
+        msi_log = Path(log_dir) / "msiexec_uninstall.log" if log_dir else None
         for attempt in range(1, 3):
             log.info("Uninstalling via msiexec /x %s", product_code)
+            cmd = ["msiexec", "/x", product_code, "/qn"]
+            if msi_log:
+                cmd.extend(["/l*v", str(msi_log)])
             result = subprocess.run(
-                ["msiexec", "/x", product_code, "/qn"],
+                cmd,
                 capture_output=True, timeout=300,
                 encoding="utf-8", errors="replace",
             )
@@ -366,6 +380,13 @@ class LocalClient:
                     )
                 log.info("Retrying uninstall in 10 seconds...")
                 time.sleep(10)
+        if msi_log and msi_log.is_file():
+            log.error("msiexec uninstall log: %s", msi_log)
+        if result.returncode == 1603:
+            raise UninstallCriticalError(
+                f"Uninstall failed with critical error 1603 "
+                f"(product_code={product_code})"
+            )
         raise RuntimeError(
             f"Uninstall failed after 2 attempts "
             f"(product_code={product_code}, "
