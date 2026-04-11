@@ -719,13 +719,18 @@ def _try_record_manual_result(
     try:
         import shlex
         from util_batch import (
-            BATCH_RECORD_JSON, apply_result_to_test,
-            generate_html_report, load_record, save_record,
+            BATCH_JSON, BATCH_RECORD_JSON, apply_result_to_test,
+            create_record, generate_html_report, load_batch_config,
+            load_record, save_record,
         )
 
         record = load_record(BATCH_RECORD_JSON)
         if record is None:
-            return
+            if not BATCH_JSON.exists():
+                return
+            base_args, tests = load_batch_config(BATCH_JSON)
+            record = create_record(base_args, tests)
+            log.info("Created batch record from %s", BATCH_JSON)
 
         manual_set = _normalize_argv(argv)
 
