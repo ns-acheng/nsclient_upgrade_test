@@ -115,20 +115,16 @@ class InstallerManager:
         Ensure the Netskope Client is installed at the correct base
         version and running.
 
-        Compares the installed version (from registry) against the base
-        MSI's Subject field:
-
-        - **(0) Different version installed** — uninstall via msiexec /x,
-          then do full install flow.
-        - **(1) Same version and service running** — skip install, go
-          straight to upgrade.
-        - **(2) Same version but service not running** — uninstall via
-          msiexec /x, then do full install flow.
-        - **(3) Not installed** — do full install flow.
+        Always uninstalls any existing client before installing the base
+        version. If no client is installed, proceeds directly to install.
 
         The install flow: send email invite (if requested), resolve
         installer (with optional tenant-specific rename), install via
         msiexec, wait for service.
+
+        When *invite_email* is provided, both the download link and the
+        tenant-specific MSI rename are required. If either fails, the
+        test is aborted with a RuntimeError.
 
         :param from_version: Build version for download fallback
                              (e.g. '123.0.0').
@@ -183,55 +179,11 @@ class InstallerManager:
             log.info("Email invite thread started in parallel with uninstall")
 
         needs_uninstall = False
-        if uninstall_info.found and msi_version:
+        if uninstall_info.found:
             installed_version = uninstall_info.display_version
             log.info(
-                "Installed: %s (running=%s), base MSI: %s",
-                installed_version, service_running, msi_version,
-            )
-            if installed_version == msi_version and service_running:
-                if self.client.verify_install_dir(self.source_64_bit):
-                    log.info(
-                        "Installed version matches base MSI and running "
-                        "— skipping install"
-                    )
-                    return
-                log.info(
-                    "Version matches but wrong arch (expected %s-bit) "
-                    "— uninstalling",
-                    "64" if self.source_64_bit else "32",
-                )
-                needs_uninstall = True
-            elif installed_version == msi_version:
-                if not self.client.verify_install_dir(self.source_64_bit):
-                    log.info(
-                        "Version matches but wrong arch (expected %s-bit) "
-                        "— uninstalling",
-                        "64" if self.source_64_bit else "32",
-                    )
-                else:
-                    log.info(
-                        "Same version but not running — uninstalling "
-                        "before reinstall"
-                    )
-                needs_uninstall = True
-            else:
-                log.info(
-                    "Installed version %s differs from base MSI %s "
-                    "— uninstalling first",
-                    installed_version, msi_version,
-                )
-                needs_uninstall = True
-        elif uninstall_info.found:
-            if service_running:
-                log.info(
-                    "Client running (no MSI version to compare) "
-                    "— skipping install"
-                )
-                return
-            log.info(
-                "Client installed but not running (no MSI version) "
-                "— uninstalling"
+                "Installed: %s (running=%s), base MSI: %s — uninstalling",
+                installed_version, service_running, msi_version or "(unknown)",
             )
             needs_uninstall = True
         else:
@@ -259,8 +211,15 @@ class InstallerManager:
                     invite_email
                 )
             installer_name = self._get_installer_name(download_link)
-            if installer_name:
-                print(f"Installer name: {installer_name}")
+            if not download_link:
+                raise RuntimeError(
+                    "Email invite flow: failed to extract download link from Gmail — aborting test"
+                )
+            if not installer_name:
+                raise RuntimeError(
+                    "Email invite flow: could not compose installer name (MSI not renamed) — aborting test"
+                )
+            print(f"Installer name: {installer_name}")
 
         # Resolve base installer and copy to tenant-specific name
         installer = resolve_installer(base_filename, installer_name)
