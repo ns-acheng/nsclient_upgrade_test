@@ -11,6 +11,7 @@ Usage:
 Options:
     --batch  PATH    Batch definition JSON  (default: data/batch.json)
     --record PATH    Batch record JSON      (default: log/batch_record.json)
+    --retry-unknown  Reset failed tests with empty/unknown version_before to pending
     -v               Verbose logging
 """
 
@@ -196,13 +197,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     record_path = Path(args.record)
 
     # ── Retry mode ────────────────────────────────────────────────────
-    if args.retry_failed or args.retry:
+    if args.retry_failed or args.retry or args.retry_unknown:
         record = load_record(record_path)
         if record is None:
             print("Error: No batch record found. Run batch.py first.")
             return 1
-        n = _reset_tests(record, retry_failed=args.retry_failed,
-                         retry_ids=args.retry or [])
+        n = _reset_tests(
+            record,
+            retry_failed=args.retry_failed,
+            retry_ids=args.retry or [],
+            retry_unknown_version=args.retry_unknown,
+        )
         if n == 0:
             print("No matching tests found to retry.")
             return 0
@@ -259,18 +264,27 @@ def _reset_tests(
     record: BatchRecord,
     retry_failed: bool = False,
     retry_ids: list[str] | None = None,
+    retry_unknown_version: bool = False,
 ) -> int:
     """
     Reset tests to pending in-place.
 
     :param retry_failed: Reset every test whose status is ``fail``.
     :param retry_ids: Reset tests whose id is in this list (any status).
+    :param retry_unknown_version: Reset failed tests whose ``version_before``
+                                  is empty or ``"unknown"`` — indicates the
+                                  test never reached the upgrade phase.
     :return: Number of tests reset.
     """
     ids = set(retry_ids or [])
     n = 0
     for test in record.tests:
-        if (retry_failed and test.status == "fail") or test.id in ids:
+        unknown_ver = (
+            retry_unknown_version
+            and test.status == "fail"
+            and test.version_before in ("", "unknown")
+        )
+        if (retry_failed and test.status == "fail") or test.id in ids or unknown_ver:
             _reset_test(test)
             log.info("Reset test [%s] to pending", test.id)
             n += 1
@@ -463,6 +477,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--retry", nargs="+", metavar="ID",
         help="Reset specific test(s) by ID to pending and re-run",
+    )
+    parser.add_argument(
+        "--retry-unknown", dest="retry_unknown", action="store_true",
+        help="Reset failed tests with empty/unknown version_before to pending "
+             "(failed before reaching the upgrade phase)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser

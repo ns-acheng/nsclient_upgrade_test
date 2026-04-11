@@ -450,7 +450,7 @@ def _run_post_reboot_validation(
     """
     from util_client import LocalClient
     from upgrade_runner import UpgradeResult
-    from util_verify import format_validation_issues
+    from util_verify import format_validation_issues, is_mismatch_only_failure
 
     # Version after: read from local exe, fall back to registry
     version_after = _get_local_version(state.target_64_bit)
@@ -514,7 +514,13 @@ def _run_post_reboot_validation(
         service_running=service_running,
         exe_validation=exe_validation,
         uninstall_entry=uninstall_entry,
-        critical_failure=False if driver_note else not validation_ok,
+        critical_failure=(
+            False
+            if driver_note or is_mismatch_only_failure(
+                exe_validation, service_running, uninstall_entry,
+            )
+            else not validation_ok
+        ),
     )
 
 

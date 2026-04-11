@@ -25,15 +25,15 @@ a{color:#2563eb}
 <h1>Batch Upgrade Report</h1>
 <div class='meta'>
   Batch ID: <strong>20260411_090214</strong>&nbsp;|&nbsp;
-  Started: 2026-04-11T09:02:14&nbsp;|&nbsp;Finished: 2026-04-11T21:27:33&nbsp;|&nbsp;
-  Generated: 2026-04-11 21:27:33
+  Started: 2026-04-11T09:02:14&nbsp;|&nbsp;Finished: 2026-04-11T21:58:07&nbsp;|&nbsp;
+  Generated: 2026-04-11 21:58:07
 </div>
 <div class='base'>Base args:&nbsp; upgrade --target latest --email acheng@netskope.com</div>
 <div class='summary'>
   <span class='badge' style='background:#dcfce7;color:#16a34a'>PASS&nbsp;8</span>
-  <span class='badge' style='background:#fee2e2;color:#dc2626'>FAIL&nbsp;39</span>
+  <span class='badge' style='background:#fee2e2;color:#dc2626'>FAIL&nbsp;42</span>
   <span class='badge' style='background:#fefce8;color:#ca8a04'>RUNNING&nbsp;0</span>
-  <span class='badge' style='background:#f1f5f9;color:#64748b'>PENDING&nbsp;113</span>
+  <span class='badge' style='background:#f1f5f9;color:#64748b'>PENDING&nbsp;110</span>
   <span class='badge' style='background:#e0f2fe;color:#0369a1'>TOTAL&nbsp;160</span>
 </div>
 <table><thead>
@@ -98,9 +98,9 @@ Stacktrace:
 <tr style='background:#fef2f2'><td>64to32_rb8</td><td class='mono'>--source-64bit --reboottime 8</td><td><span style='color:#dc2626;font-weight:700'>FAIL</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>2026-04-11 21:17</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>Stopped by user</td></tr>
 <tr style='background:#fef2f2'><td>64to64_rb8</td><td class='mono'>--target-64bit --source-64bit --reboottime 8</td><td><span style='color:#dc2626;font-weight:700'>FAIL</span></td><td>unknown</td><td>unknown</td><td>unknown</td><td style='white-space:nowrap'>2026-04-11 21:21</td><td>140s</td><td><a href='file:///C:/git/nsclient_upgrade_test/log/upgrade_20260411_212139'>open</a></td><td class='msg'>Exception: msiexec failed (exit code 1603) (see C:\git\nsclient_upgrade_test\log\upgrade_20260411_212139\msiexec.log)</td></tr>
 <tr style='background:#fef2f2'><td>32to32_rb9</td><td class='mono'>--reboottime 9</td><td><span style='color:#dc2626;font-weight:700'>FAIL</span></td><td>135.1.10.2611</td><td>137.0.0.2655</td><td>137.0.0.2655</td><td style='white-space:nowrap'>2026-04-11 21:24</td><td>188s</td><td><a href='file:///C:/git/nsclient_upgrade_test/log/upgrade_20260411_212646_from135.1_to137.0_reboottime_9'>open</a></td><td class='msg'>Upgrade successful: 135.1.10.2611 -&gt; 137.0.0.2655 — ISSUES: exe version mismatch: stAgentSvcMon.exe: 135.1.10.2611 (expected 137.0.0.2655)</td></tr>
-<tr style='background:#f9fafb'><td>32to64_rb9</td><td class='mono'>--target-64bit --reboottime 9</td><td><span style='color:#6b7280;font-weight:700'>PENDING</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>&mdash;</td></tr>
-<tr style='background:#f9fafb'><td>64to32_rb9</td><td class='mono'>--source-64bit --reboottime 9</td><td><span style='color:#6b7280;font-weight:700'>PENDING</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>&mdash;</td></tr>
-<tr style='background:#f9fafb'><td>64to64_rb9</td><td class='mono'>--target-64bit --source-64bit --reboottime 9</td><td><span style='color:#6b7280;font-weight:700'>PENDING</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>&mdash;</td></tr>
+<tr style='background:#fef2f2'><td>32to64_rb9</td><td class='mono'>--target-64bit --reboottime 9</td><td><span style='color:#dc2626;font-weight:700'>FAIL</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>2026-04-11 21:45</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>Stopped by user</td></tr>
+<tr style='background:#fef2f2'><td>64to32_rb9</td><td class='mono'>--source-64bit --reboottime 9</td><td><span style='color:#dc2626;font-weight:700'>FAIL</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>2026-04-11 21:51</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>Stopped by user</td></tr>
+<tr style='background:#fef2f2'><td>64to64_rb9</td><td class='mono'>--target-64bit --source-64bit --reboottime 9</td><td><span style='color:#dc2626;font-weight:700'>FAIL</span></td><td>135.1.10.2611 (64-bit)</td><td>137.0.0.2655 (64-bit)</td><td>137.0.0.2655 (64-bit)</td><td style='white-space:nowrap'>2026-04-11 21:53</td><td>273s</td><td><a href='file:///C:/git/nsclient_upgrade_test/log/upgrade_20260411_215611_from135.1_to137.0x64_reboottime_9'>open</a></td><td class='msg'>Upgrade successful: 135.1.10.2611 (64-bit) -&gt; 137.0.0.2655 (64-bit) — ISSUES: exe version mismatch: stAgentSvcMon.exe: 135.1.10.2611 (expected 137.0.0.2655)</td></tr>
 <tr style='background:#f9fafb'><td>32to32_rb10</td><td class='mono'>--reboottime 10</td><td><span style='color:#6b7280;font-weight:700'>PENDING</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>&mdash;</td></tr>
 <tr style='background:#f9fafb'><td>32to64_rb10</td><td class='mono'>--target-64bit --reboottime 10</td><td><span style='color:#6b7280;font-weight:700'>PENDING</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>&mdash;</td></tr>
 <tr style='background:#f9fafb'><td>64to32_rb10</td><td class='mono'>--source-64bit --reboottime 10</td><td><span style='color:#6b7280;font-weight:700'>PENDING</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td style='white-space:nowrap'>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td class='msg'>&mdash;</td></tr>

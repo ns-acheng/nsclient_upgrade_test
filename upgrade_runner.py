@@ -25,6 +25,7 @@ from util_log import LOG_DIR, build_log_dir_name, rename_log_dir, setup_folder_l
 from util_verify import (
     UpgradeVerifier, PollResult,
     format_validation_issues,
+    is_mismatch_only_failure,
 )
 from util_webui import WebUIClient
 
@@ -272,7 +273,13 @@ class UpgradeRunner:
                 service_running=service_running,
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
-                critical_failure=False if driver_note else not validation_ok,
+                critical_failure=(
+                    False
+                    if driver_note or is_mismatch_only_failure(
+                        exe_validation, service_running, uninstall_entry,
+                    )
+                    else not validation_ok
+                ),
             )
             if not result.success:
                 self._collect_failure_logs()
@@ -451,7 +458,13 @@ class UpgradeRunner:
                 service_running=service_running,
                 exe_validation=exe_validation,
                 uninstall_entry=uninstall_entry,
-                critical_failure=False if driver_note else not validation_ok,
+                critical_failure=(
+                    False
+                    if driver_note or is_mismatch_only_failure(
+                        exe_validation, service_running, uninstall_entry,
+                    )
+                    else not validation_ok
+                ),
             )
             if not result.success:
                 self._collect_failure_logs()

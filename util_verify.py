@@ -298,6 +298,29 @@ class UpgradeVerifier:
         return valid, exe_validation, uninstall_entry
 
 
+def is_mismatch_only_failure(
+    exe_validation: Optional[ExeValidationResult],
+    service_running: bool,
+    uninstall_entry: Optional[UninstallEntryResult],
+) -> bool:
+    """
+    Return True when the only validation failure is an exe version mismatch.
+
+    All structural checks must pass: service running, uninstall entry found,
+    no missing executables, no stale arch files.  The mismatch itself must
+    exist (otherwise there is no failure to downgrade).
+
+    :return: True if downgrading critical_failure to a normal failure is safe.
+    """
+    if not service_running:
+        return False
+    if uninstall_entry is not None and not uninstall_entry.found:
+        return False
+    if exe_validation is None or not exe_validation.version_mismatches:
+        return False
+    return not exe_validation.missing and not exe_validation.stale_arch_files
+
+
 def format_validation_issues(
     service_running: bool,
     exe_validation: Optional[ExeValidationResult],
