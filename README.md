@@ -254,11 +254,11 @@ combinations is included in `data/batch.json`.
 
 | Command | Description |
 |---------|-------------|
-| `python batch.py` | Fresh run — creates a new batch record and runs all tests |
+| `python batch.py` | Fresh run — prompts if a record already exists (see below) |
 | `python batch.py --resume` | Resume from existing record, skip completed tests |
 | `python batch.py --continue` | Resume after reboot (called automatically by scheduled task) |
 | `python batch.py --report` | Re-generate HTML report without running any tests |
-| `python batch.py --fresh` | Delete the existing record and start over |
+| `python batch.py --fresh` | Silently delete the existing record and start over |
 
 **Options:**
 
@@ -267,6 +267,36 @@ combinations is included in `data/batch.json`.
 | `--batch PATH` | Batch definition JSON (default: `data/batch.json`) |
 | `--record PATH` | Batch record JSON (default: `log/batch_record.json`) |
 | `-v` | Verbose logging |
+
+### Crash / interruption recovery
+
+`batch_record.json` is saved after every test, so progress is never lost.
+To resume after a crash, power failure, or manual kill:
+
+```bash
+python batch.py --resume
+```
+
+This skips all `pass`/`fail` tests and re-runs from the first `pending` or
+`running` test (a test stuck in `running` due to a crash is re-started from
+scratch).
+
+### Existing record prompt
+
+When `batch.py` is run without `--resume` or `--fresh` and
+`batch_record.json` already exists, the tool prompts:
+
+```
+  Existing batch found: 20260411_090000 (12/160 complete)
+  [o] Overwrite  [b] Backup and start fresh  (default: o)
+  Choice:
+```
+
+- **o** (default) — overwrite the existing record and start fresh.
+- **b** — rename the existing record to `batch_record_<batch_id>.json`
+  (preserving it for reference), then start fresh.
+
+To skip the prompt entirely, use `--fresh`.
 
 ### Batch record — `log/batch_record.json`
 
@@ -278,14 +308,45 @@ version_before, version_after, expected_version,
 elapsed_seconds, message, log_dir, started_at, finished_at
 ```
 
+`started_at` and `finished_at` are ISO-8601 timestamps written by `main.py`
+into the result file and copied into the record — they reflect the actual
+wall-clock times of the test run, not when the batch runner processed them.
+
 ### HTML report — `log/batch_report.html`
 
 Self-contained, no external dependencies. Open in any browser.
 
 - Color-coded status badges: green = PASS, red = FAIL, yellow = RUNNING, gray = PENDING
 - Summary row with total pass/fail/pending counts
-- Per-test table with versions, elapsed time, message, and a link to the log folder
+- Per-test table: ID, args, status, version before/after, start time, elapsed, log link, message
 - Re-generated live after each test completes and on demand with `--report`
+
+### Manual run → batch record
+
+Running `main.py upgrade ...` outside of `batch.py` still updates the batch
+record automatically on success.  After a successful manual run, the tool:
+
+1. Loads `log/batch_record.json` (creates it from `data/batch.json` if it
+   does not exist yet).
+2. Normalises the command-line arguments and finds the matching test in the
+   record (order-insensitive; meta-flags like `-v`, `--config`, `--password`
+   are ignored).
+3. Marks the matching test as `pass` and updates `batch_report.html`.
+4. If the same test is re-run and passes again, the record is overwritten
+   with the latest result.
+
+Failed manual runs are **not** recorded — only successes update the batch.
+
+### Argument logging
+
+Every `main.py` invocation logs its full argument list to both console and
+the run's log file at INFO level:
+
+```
+INFO  main.py upgrade --target latest --email acheng@netskope.com --target-64bit
+```
+
+This makes it easy to reproduce any run from the log.
 
 ### Multi-email Chrome profiles
 

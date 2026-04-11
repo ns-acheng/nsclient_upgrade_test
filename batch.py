@@ -20,6 +20,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from util_batch import (
     BATCH_JSON,
@@ -146,8 +147,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     Run all pending tests.
 
     With ``--resume``, load the existing record and skip completed
-    tests.  Without it, always create a fresh record (existing record
-    is discarded).
+    tests.  Without it, start fresh — but if a record already exists,
+    prompt the user to overwrite or back it up first.
     """
     batch_path = Path(args.batch)
     record_path = Path(args.record)
@@ -161,8 +162,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
         else:
             log.info("No existing record found — starting fresh")
+            record = None
+    else:
+        record = None
+        if record_path.exists():
+            record = _prompt_overwrite_or_backup(record_path)
 
-    if not args.resume or record is None:
+    if record is None:
         base_args, tests = load_batch_config(batch_path)
         record = create_record(base_args, tests)
         save_record(record, record_path)
@@ -175,6 +181,45 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"Base args: {record.base_args}\n")
 
     return _execute_pending(record, record_path)
+
+
+def _prompt_overwrite_or_backup(record_path: Path) -> Optional[BatchRecord]:
+    """
+    Prompt the user when a batch record already exists.
+
+    - ``o`` (default): overwrite — return None so caller creates fresh.
+    - ``b``: back up existing file with a timestamp suffix, then return
+             None so caller creates a fresh record.
+
+    :return: None in both cases (caller always creates a fresh record).
+    """
+    existing = load_record(record_path)
+    if existing:
+        n_done = sum(1 for t in existing.tests if t.status in ("pass", "fail"))
+        total = len(existing.tests)
+        print(
+            f"\n  Existing batch found: {existing.batch_id} "
+            f"({n_done}/{total} complete)"
+        )
+    else:
+        print(f"\n  {record_path.name} already exists.")
+
+    print("  [o] Overwrite  [b] Backup and start fresh  (default: o)")
+    try:
+        choice = input("  Choice: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        choice = "o"
+
+    if choice == "b":
+        suffix = existing.batch_id if existing else datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = record_path.with_name(f"{record_path.stem}_{suffix}.json")
+        record_path.rename(backup)
+        print(f"  Backed up to {backup.name}")
+        log.info("Backed up existing record to %s", backup)
+    else:
+        print("  Overwriting existing record.")
+
+    return None
 
 
 def cmd_continue(args: argparse.Namespace) -> int:

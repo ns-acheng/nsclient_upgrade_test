@@ -1,5 +1,5 @@
 {
-  "batch_id": "20260411_085723",
+  "batch_id": "20260411_090214",
   "base_args": "upgrade --target latest --email acheng@netskope.com",
   "tests": [
     {
@@ -44,15 +44,15 @@
     {
       "id": "64to64",
       "extra_args": "--target-64bit --source-64bit",
-      "status": "pass",
-      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260411_085012_from135.1_to137.0x64",
-      "version_before": "135.1.10.2611 (64-bit)",
-      "version_after": "137.0.0.2655 (64-bit)",
-      "expected_version": "137.0.0.2655 (64-bit)",
-      "elapsed_seconds": 649.444314956665,
-      "message": "Upgrade successful: 135.1.10.2611 (64-bit) -> 137.0.0.2655 (64-bit)",
-      "started_at": "2026-04-11T08:46:24",
-      "finished_at": "2026-04-11T08:57:23"
+      "status": "pending",
+      "log_dir": "",
+      "version_before": "",
+      "version_after": "",
+      "expected_version": "",
+      "elapsed_seconds": 0.0,
+      "message": "",
+      "started_at": "",
+      "finished_at": ""
     },
     {
       "id": "32to32_rb1",
@@ -2083,6 +2083,6 @@
       "finished_at": ""
     }
   ],
-  "started_at": "2026-04-11T08:57:23",
+  "started_at": "2026-04-11T09:02:14",
   "finished_at": ""
 }
