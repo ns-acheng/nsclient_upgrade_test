@@ -840,11 +840,13 @@ class TimingMonitor:
         return self._ui_was_seen
 
     def _detect_service_stop_pending(self) -> bool:
-        """Timing 6: stAgentSvc service stopped/stop_pending."""
+        """Timing 6: stAgentSvc service stopped/stop_pending/gone."""
         info = LocalClient.query_service("stAgentSvc")
-        return info.exists and info.state in (
-            "STOP_PENDING", "STOPPED",
-        )
+        if not info.exists:
+            # Service was removed entirely between polls — the
+            # STOP_PENDING/STOPPED states were too brief to catch.
+            return True
+        return info.state in ("STOP_PENDING", "STOPPED")
 
     def _detect_svc_process_gone(self) -> bool:
         """Timing 7: stAgentSvc.exe process gone (keep PID)."""
@@ -864,12 +866,14 @@ class TimingMonitor:
         return info.state in ("STOP_PENDING", "STOPPED")
 
     def _detect_service_stopped_after_exit(self) -> bool:
-        """Timing 9: stAgentSvc service stopped (after process exit)."""
+        """Timing 9: stAgentSvc service stopped/gone (after process exit)."""
         with self._lock:
             if "7" not in self._state.timings:
                 return False
         info = LocalClient.query_service("stAgentSvc")
-        return info.exists and info.state == "STOPPED"
+        if not info.exists:
+            return True
+        return info.state == "STOPPED"
 
     def _detect_service_gone(self) -> bool:
         """Timing 10: stAgentSvc service removed from SCM."""

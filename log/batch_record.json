@@ -313,15 +313,15 @@
     {
       "id": "64to32_rb5",
       "extra_args": "--source-64bit --reboottime 5",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "Stopped by user",
-      "started_at": "2026-04-12T06:37:39",
-      "finished_at": "2026-04-12T06:38:11",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260412_084205",
+      "version_before": "unknown",
+      "version_after": "unknown",
+      "expected_version": "unknown",
+      "elapsed_seconds": 77.43894124031067,
+      "message": "Exception: Email invite flow: failed to extract download link from Gmail \u2014 aborting test",
+      "started_at": "2026-04-12T08:42:05",
+      "finished_at": "2026-04-12T08:43:29",
       "critical_failure": false
     },
     {
@@ -362,8 +362,8 @@
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "Stopped by user",
-      "started_at": "2026-04-12T06:38:40",
-      "finished_at": "2026-04-12T06:45:20",
+      "started_at": "2026-04-12T08:43:36",
+      "finished_at": "2026-04-12T08:55:28",
       "critical_failure": false
     },
     {
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-12T08:20:24"
+  "finished_at": "2026-04-12T08:55:28"
 }
