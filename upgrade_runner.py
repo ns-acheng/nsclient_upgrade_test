@@ -121,6 +121,7 @@ class UpgradeRunner:
         self._batch_mode = batch_mode
         self._original_argv: list[str] = original_argv or []
         self._watchdog_mode: bool = False
+        self._auto_update_already_enabled: bool = False
 
         # Composed helpers
         self._installer = InstallerManager(
@@ -197,12 +198,20 @@ class UpgradeRunner:
             # Create scenario log folder now that versions are known
             self._create_log_dir(version_before, expected)
 
-            # Trigger upgrade via WebUI
-            self._check_stopped()
-            self.webui.enable_upgrade_latest(
-                search_config=self.config_name,
-                target_64_bit=self.target_64_bit,
-            )
+            # Trigger upgrade via WebUI — skip if tenant already
+            # had auto-update enabled (race: upgrade may already
+            # be in progress)
+            if self._auto_update_already_enabled:
+                log.info(
+                    "allowAutoUpdate already enabled on tenant — "
+                    "skipping WebUI config, going straight to monitor"
+                )
+            else:
+                self._check_stopped()
+                self.webui.enable_upgrade_latest(
+                    search_config=self.config_name,
+                    target_64_bit=self.target_64_bit,
+                )
             self._upgrade_enabled = True
 
             # Start monitor before sync loop so it can detect
@@ -212,7 +221,8 @@ class UpgradeRunner:
                 expected_version=expected,
                 scenario=scenario,
             )
-            self._start_sync_thread(monitor)
+            if not self._auto_update_already_enabled:
+                self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -385,13 +395,21 @@ class UpgradeRunner:
             # Create scenario log folder now that versions are known
             self._create_log_dir(version_before, expected)
 
-            # Trigger golden upgrade via WebUI
-            self._check_stopped()
-            self.webui.enable_upgrade_golden(
-                golden_version, dot=dot,
-                search_config=self.config_name,
-                target_64_bit=self.target_64_bit,
-            )
+            # Trigger golden upgrade via WebUI — skip if tenant already
+            # had auto-update enabled (race: upgrade may already
+            # be in progress)
+            if self._auto_update_already_enabled:
+                log.info(
+                    "allowAutoUpdate already enabled on tenant — "
+                    "skipping WebUI config, going straight to monitor"
+                )
+            else:
+                self._check_stopped()
+                self.webui.enable_upgrade_golden(
+                    golden_version, dot=dot,
+                    search_config=self.config_name,
+                    target_64_bit=self.target_64_bit,
+                )
             self._upgrade_enabled = True
 
             # Start monitor before sync loop so it can detect
@@ -401,7 +419,8 @@ class UpgradeRunner:
                 expected_version=expected,
                 scenario=scenario,
             )
-            self._start_sync_thread(monitor)
+            if not self._auto_update_already_enabled:
+                self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -824,6 +843,16 @@ class UpgradeRunner:
         After a fresh install, nsconfig.json may not yet have the
         ``configurationName``.  Running ``nsdiag -u`` forces a pull,
         then we re-read nsconfig.json to pick up the correct name.
+
+        Reads three values together after sync:
+        - ``config_name`` (clientConfig.configurationName)
+        - ``watchdog_mode`` (clientConfig.nsclient_watchdog_monitor)
+        - ``allow_auto_update`` (clientConfig.clientUpdate.allowAutoUpdate)
+
+        If the tenant already has auto-update enabled, sets
+        ``_auto_update_already_enabled`` so callers can skip
+        redundant WebUI config calls.
+
         Skips entirely when config_name is already set.
         """
         if self.config_name:
@@ -846,6 +875,14 @@ class UpgradeRunner:
             )
         self._watchdog_mode = LocalClient.is_watchdog_mode()
         log.info("Watchdog mode: %s", self._watchdog_mode)
+
+        self._auto_update_already_enabled = (
+            ns_info.allow_auto_update if ns_info else False
+        )
+        log.info(
+            "allowAutoUpdate already enabled: %s",
+            self._auto_update_already_enabled,
+        )
 
     # ── Timing applicability ─────────────────────────────────────────
 
