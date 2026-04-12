@@ -178,8 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resume timing monitor after reboot (auto-called by scheduled task)",
     )
     continue_parser.add_argument(
-        "--timeout", type=int, default=600,
-        help="Max seconds to wait for remaining timings (default: 600)",
+        "--timeout", type=int, default=180,
+        help="Max seconds to wait for upgrade after reboot (default: 180)",
     )
     continue_parser.add_argument(
         "--result-file", dest="result_file", default=None,
@@ -411,7 +411,10 @@ def cmd_continue(args: argparse.Namespace) -> int:
         watchdog_mode=watchdog_mode,
     )
     monitor.start()
-    completed = monitor.wait_for_upgrade_complete(timeout=args.timeout)
+    completed = monitor.wait_for_upgrade_complete(
+        timeout=args.timeout,
+        extend_timeout=0,   # no extension — upgrade already in progress
+    )
     monitor.stop()
     monitor.print_report()
 
