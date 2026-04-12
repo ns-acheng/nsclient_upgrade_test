@@ -349,11 +349,13 @@ class TimingMonitor:
         scenario: str = "",
         source_64_bit: bool = False,
         original_argv: list[str] | None = None,
+        watchdog_mode: bool = False,
     ) -> None:
         self._target_64_bit = target_64_bit
         self._timeout = timeout
         self._poll_interval = poll_interval
         self._skip_continue_task = skip_continue_task
+        self._watchdog_mode = watchdog_mode
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -402,6 +404,16 @@ class TimingMonitor:
             12: self._detect_svc_new_pid,
             13: self._detect_monitor_upgraded,
         }
+
+        # In watchdog mode, stAgentSvcMon.exe lifecycle is managed
+        # differently — timing 13 (monitor stopped & upgraded) will
+        # never fire, so remove it from the detector map.
+        if self._watchdog_mode:
+            self._detectors.pop(13, None)
+            log.info(
+                "Watchdog mode: skipping timing 13 "
+                "(stAgentSvcMon.exe not managed by monitor)"
+            )
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -547,6 +559,8 @@ class TimingMonitor:
         lines: list[str] = []
         lines.append(f"{'=' * 60}")
         lines.append("  Upgrade Timing Report")
+        if self._watchdog_mode:
+            lines.append("  (watchdog mode — timing 13 skipped)")
         lines.append(f"{'=' * 60}")
         for num in range(1, TOTAL_TIMINGS + 1):
             event = TimingEvent(num)
@@ -557,6 +571,10 @@ class TimingMonitor:
                 lines.append(
                     f"  [{offset:7.1f}s] {num:2d}. {event.description}"
                 )
+            elif self._watchdog_mode and num == 13:
+                lines.append(
+                    f"  [   SKIP] {num:2d}. {event.description}"
+                )
             else:
                 lines.append(
                     f"  [    N/A] {num:2d}. {event.description}"
@@ -565,7 +583,8 @@ class TimingMonitor:
             detected = len(self._state.timings)
             reboot_triggered = self._state.reboot_triggered
             reboot_time = self._state.reboot_time
-        lines.append(f"\n  Detected: {detected}/{TOTAL_TIMINGS} timings")
+        expected_count = len(self._detectors)
+        lines.append(f"\n  Detected: {detected}/{expected_count} timings")
         if reboot_triggered:
             lines.append(f"  Reboot triggered at timing {reboot_time}")
         report = "\n".join(lines)
@@ -678,9 +697,10 @@ class TimingMonitor:
 
             with self._lock:
                 count = len(self._state.timings)
-            if count == TOTAL_TIMINGS:
+            expected_count = len(self._detectors)
+            if count >= expected_count:
                 self._all_detected.set()
-                log.info("All %d timings detected", TOTAL_TIMINGS)
+                log.info("All %d timings detected", expected_count)
                 return
 
             if elapsed >= self._timeout:

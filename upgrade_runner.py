@@ -8,6 +8,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -231,6 +232,9 @@ class UpgradeRunner:
             # Stop monitor and print timing report
             self._stop_monitor(monitor)
 
+            # Wait for posture to settle after timing 12
+            self._wait_posture_settle(monitor)
+
             # Post-upgrade checks
             service_running = self._verifier.verify_service_running()
             validation_ok, exe_validation, uninstall_entry = (
@@ -416,6 +420,9 @@ class UpgradeRunner:
 
             # Stop monitor and print timing report
             self._stop_monitor(monitor)
+
+            # Wait for posture to settle after timing 12
+            self._wait_posture_settle(monitor)
 
             # Post-upgrade checks
             service_running = self._verifier.verify_service_running()
@@ -652,6 +659,7 @@ class UpgradeRunner:
             scenario=scenario,
             source_64_bit=self.source_64_bit,
             original_argv=self._original_argv,
+            watchdog_mode=self._watchdog_mode,
         )
         monitor.start()
 
@@ -672,6 +680,34 @@ class UpgradeRunner:
         monitor.print_report()
 
     # ── Shared Helpers ───────────────────────────────────────────────
+
+    # Minimum seconds after timing 12 (service running with new PID)
+    # before running post-upgrade posture validation. Gives the client
+    # time to finish driver installation, register in the uninstall
+    # registry, and let stAgentSvcMon settle.
+    POSTURE_SETTLE_SECONDS = 30
+
+    def _wait_posture_settle(self, monitor: Any) -> None:
+        """
+        Wait until at least :attr:`POSTURE_SETTLE_SECONDS` have elapsed
+        since timing 12 was detected, then proceed with posture validation.
+
+        If timing 12 was not detected (e.g. timeout), this is a no-op.
+        """
+        t12_offset = monitor.state.timings.get("12")
+        if t12_offset is None:
+            return
+        monitor_start = datetime.fromisoformat(
+            monitor.state.monitor_start_time
+        ).timestamp()
+        t12_abs = monitor_start + t12_offset
+        remaining = self.POSTURE_SETTLE_SECONDS - (time.time() - t12_abs)
+        if remaining > 0:
+            log.info(
+                "Waiting %.0fs for posture to settle after timing 12",
+                remaining,
+            )
+            time.sleep(remaining)
 
     def _check_stopped(self) -> None:
         """Raise if the stop event (ESC key) has been set."""
@@ -823,9 +859,14 @@ class UpgradeRunner:
         Timing 3 (stAgentSvcMon.exe -monitor starts) never fires in watchdog
         mode — the monitor process lifecycle is managed differently.
         """
-        if self.reboot_time == 3 and self._watchdog_mode:
+        if self.reboot_time in (3, 13) and self._watchdog_mode:
+            label = (
+                "stAgentSvcMon.exe -monitor"
+                if self.reboot_time == 3
+                else "stAgentSvcMon.exe stopped & upgraded"
+            )
             msg = (
-                "Skipped: reboottime 3 (stAgentSvcMon.exe -monitor) "
+                f"Skipped: reboottime {self.reboot_time} ({label}) "
                 "never fires in watchdog mode"
             )
             log.info(msg)

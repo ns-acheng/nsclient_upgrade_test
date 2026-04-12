@@ -401,17 +401,22 @@ def cmd_continue(args: argparse.Namespace) -> int:
         setup_folder_logging(log_dir, log_filename="upgrade_continue.log")
         log.info("Reusing pre-reboot log folder: %s", log_dir)
 
-    log.info("Resuming timing monitor from saved state")
+    watchdog_mode = LocalClient.is_watchdog_mode()
+    log.info("Resuming timing monitor from saved state (watchdog=%s)", watchdog_mode)
     monitor = TimingMonitor(
         target_64_bit=state.target_64_bit,
         reboot_time=None,
         timeout=args.timeout,
         state=state,
+        watchdog_mode=watchdog_mode,
     )
     monitor.start()
     completed = monitor.wait_for_upgrade_complete(timeout=args.timeout)
     monitor.stop()
     monitor.print_report()
+
+    # Wait for posture to settle after timing 12 (30s from detection)
+    _wait_posture_settle(monitor)
 
     clear_monitor_state()
     delete_continue_task()
@@ -432,6 +437,27 @@ def cmd_continue(args: argparse.Namespace) -> int:
         _try_record_manual_result(result, log_dir, state.original_argv)
 
     return 0 if result.success else 1
+
+
+POSTURE_SETTLE_SECONDS = 30
+
+
+def _wait_posture_settle(monitor: "TimingMonitor") -> None:
+    """Wait until 30s after timing 12, then proceed with posture validation."""
+    t12_offset = monitor.state.timings.get("12")
+    if t12_offset is None:
+        return
+    monitor_start = datetime.fromisoformat(
+        monitor.state.monitor_start_time
+    ).timestamp()
+    t12_abs = monitor_start + t12_offset
+    remaining = POSTURE_SETTLE_SECONDS - (time.time() - t12_abs)
+    if remaining > 0:
+        log.info(
+            "Waiting %.0fs for posture to settle after timing 12",
+            remaining,
+        )
+        time.sleep(remaining)
 
 
 def _run_post_reboot_validation(

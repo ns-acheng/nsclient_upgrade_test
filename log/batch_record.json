@@ -313,7 +313,7 @@
     {
       "id": "64to32_rb5",
       "extra_args": "--source-64bit --reboottime 5",
-      "status": "fail",
+      "status": "pending",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
@@ -355,7 +355,7 @@
     {
       "id": "32to64_rb6",
       "extra_args": "--target-64bit --reboottime 6",
-      "status": "fail",
+      "status": "pending",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
@@ -453,7 +453,7 @@
     {
       "id": "32to32_rb8",
       "extra_args": "--reboottime 8",
-      "status": "fail",
+      "status": "pending",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
@@ -467,21 +467,21 @@
     {
       "id": "32to64_rb8",
       "extra_args": "--target-64bit --reboottime 8",
-      "status": "fail",
+      "status": "pending",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
       "message": "",
-      "started_at": "2026-04-12T07:31:47",
-      "finished_at": "2026-04-12T07:34:38",
+      "started_at": "",
+      "finished_at": "",
       "critical_failure": false
     },
     {
       "id": "64to32_rb8",
       "extra_args": "--source-64bit --reboottime 8",
-      "status": "fail",
+      "status": "pending",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
@@ -495,16 +495,16 @@
     {
       "id": "64to64_rb8",
       "extra_args": "--target-64bit --source-64bit --reboottime 8",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260412_080316_from135.1_to137.0x64_reboottime_8",
+      "version_before": "135.1.10.2611 (64-bit)",
+      "version_after": "137.0.0.2655 (64-bit)",
+      "expected_version": "137.0.0.2655 (64-bit)",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "message": "Post-reboot checks failed: 135.1.10.2611 (64-bit) -> 137.0.0.2655 (64-bit) \u2014 ISSUES: uninstall registry entry missing",
+      "started_at": "2026-04-12T08:00:25",
+      "finished_at": "2026-04-12T08:05:47",
+      "critical_failure": true
     },
     {
       "id": "32to32_rb9",
@@ -523,15 +523,15 @@
     {
       "id": "32to64_rb9",
       "extra_args": "--target-64bit --reboottime 9",
-      "status": "pending",
+      "status": "fail",
       "log_dir": "",
       "version_before": "",
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "No result file after reboot continue",
+      "started_at": "2026-04-12T08:05:47",
+      "finished_at": "2026-04-12T08:08:33",
       "critical_failure": false
     },
     {
@@ -543,9 +543,9 @@
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "Stopped by user",
+      "started_at": "2026-04-12T08:08:34",
+      "finished_at": "2026-04-12T08:20:24",
       "critical_failure": false
     },
     {
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-12T07:38:52"
+  "finished_at": "2026-04-12T08:20:24"
 }

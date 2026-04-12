@@ -218,7 +218,7 @@ def run_test_subprocess(
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                test.status = "fail"
+                test.status = "pending"
                 test.message = "Stopped by user"
                 test.finished_at = datetime.now().isoformat(timespec="seconds")
                 return
