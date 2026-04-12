@@ -785,10 +785,15 @@ class UpgradeRunner:
         Launch a background thread that runs ``nsdiag -u`` up to 3 times,
         with a 30-second gap between attempts.
 
-        The thread stops early as soon as any timing event fires so the
-        syncs don't continue once the upgrade is already in progress.
-        The main thread returns immediately and proceeds to
-        ``wait_for_upgrade_complete``.
+        After each sync, re-reads nsconfig.json for config_name,
+        watchdog_mode, and allowAutoUpdate.  If allowAutoUpdate is
+        already true the tenant config is live — stop syncing and
+        let the monitor capture the upgrade in progress.
+
+        The thread also stops early when any timing event fires so
+        the syncs don't continue once the upgrade is already in
+        progress.  The main thread returns immediately and proceeds
+        to ``wait_for_upgrade_complete``.
 
         :param monitor: Running TimingMonitor instance.
         """
@@ -811,6 +816,32 @@ class UpgradeRunner:
                     "Config sync attempt %d/%d complete",
                     attempt, MAX_SYNC_ATTEMPTS,
                 )
+
+                # Re-read nsconfig after each sync for fresh values
+                ns_info = self.client.detect_tenant_from_nsconfig()
+                if ns_info:
+                    if ns_info.config_name and not self.config_name:
+                        self.config_name = ns_info.config_name
+                        log.info(
+                            "Sync thread detected config_name: %s",
+                            self.config_name,
+                        )
+                    wdog = LocalClient.is_watchdog_mode()
+                    if wdog != self._watchdog_mode:
+                        self._watchdog_mode = wdog
+                        log.info(
+                            "Sync thread updated watchdog_mode: %s",
+                            self._watchdog_mode,
+                        )
+                    if ns_info.allow_auto_update:
+                        log.info(
+                            "Sync thread: allowAutoUpdate=true after "
+                            "attempt %d — stop syncing, monitor will "
+                            "capture upgrade",
+                            attempt,
+                        )
+                        return
+
                 if attempt < MAX_SYNC_ATTEMPTS:
                     # Wait between attempts; abort early if any timing fires
                     for _ in range(SYNC_INTERVAL):
