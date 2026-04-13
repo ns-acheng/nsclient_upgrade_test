@@ -117,16 +117,16 @@
     {
       "id": "32to32_rb2",
       "extra_args": "--reboottime 2",
-      "status": "running",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260413_114113_from135.1_to137.0_reboottime_2",
+      "version_before": "135.1.10.2611",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "2026-04-12T03:08:08",
-      "finished_at": "",
-      "critical_failure": false
+      "message": "Post-reboot checks failed: 135.1.10.2611 -> 137.0.0.2655 \u2014 ISSUES: multiple stAgentSvcMon.exe instances running (PIDs: 3532, 5860)",
+      "started_at": "2026-04-13T11:37:56",
+      "finished_at": "2026-04-13T11:44:47",
+      "critical_failure": true
     },
     {
       "id": "32to64_rb2",
@@ -159,15 +159,15 @@
     {
       "id": "64to64_rb2",
       "extra_args": "--target-64bit --source-64bit --reboottime 2",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
-      "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260413_114449",
+      "version_before": "unknown",
+      "version_after": "unknown",
+      "expected_version": "unknown",
+      "elapsed_seconds": 46.70666742324829,
+      "message": "Exception: Email invite flow: failed to extract download link from Gmail \u2014 aborting test",
+      "started_at": "2026-04-13T11:44:49",
+      "finished_at": "2026-04-13T11:45:44",
       "critical_failure": false
     },
     {
@@ -257,30 +257,30 @@
     {
       "id": "64to32_rb4",
       "extra_args": "--source-64bit --reboottime 4",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260413_114837_from135.1_to137.0_reboottime_4",
+      "version_before": "135.1.10.2611 (64-bit)",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "message": "Post-reboot checks failed: 135.1.10.2611 (64-bit) -> 137.0.0.2655 \u2014 ISSUES: old arch files not cleaned: stAgentSvcMon.exe, multiple stAgentSvcMon.exe instances running (PIDs: 3716, 5436)",
+      "started_at": "2026-04-13T11:45:45",
+      "finished_at": "2026-04-13T11:51:21",
+      "critical_failure": true
     },
     {
       "id": "64to64_rb4",
       "extra_args": "--target-64bit --source-64bit --reboottime 4",
-      "status": "pending",
-      "log_dir": "",
-      "version_before": "",
-      "version_after": "",
-      "expected_version": "",
+      "status": "fail",
+      "log_dir": "C:\\git\\nsclient_upgrade_test\\log\\upgrade_20260413_115339_from135.1_to137.0x64_reboottime_4",
+      "version_before": "135.1.10.2611 (64-bit)",
+      "version_after": "137.0.0.2655",
+      "expected_version": "137.0.0.2655 (64-bit)",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
-      "critical_failure": false
+      "message": "Upgrade FAILED: expected 137.0.0.2655 (64-bit), got 137.0.0.2655 \u2014 ISSUES: missing exe: stAgentSvc.exe, stAgentUI.exe, exe version mismatch: stAgentSvcMon.exe: 135.1.10.2611 (expected 137.0.0.2655), m",
+      "started_at": "2026-04-13T11:51:21",
+      "finished_at": "2026-04-13T11:56:20",
+      "critical_failure": true
     },
     {
       "id": "32to32_rb5",
@@ -305,9 +305,9 @@
       "version_after": "",
       "expected_version": "",
       "elapsed_seconds": 0.0,
-      "message": "",
-      "started_at": "",
-      "finished_at": "",
+      "message": "Stopped by user",
+      "started_at": "2026-04-13T11:56:20",
+      "finished_at": "2026-04-13T11:58:08",
       "critical_failure": false
     },
     {
@@ -2244,5 +2244,5 @@
     }
   ],
   "started_at": "2026-04-11T09:02:14",
-  "finished_at": "2026-04-12T02:38:12"
+  "finished_at": "2026-04-13T11:58:08"
 }

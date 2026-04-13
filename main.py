@@ -112,8 +112,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--target", required=True,
-        choices=["latest", "golden", "golden-dot"],
-        help="Upgrade target: latest, golden (base only), or golden-dot (with dot release)",
+        choices=["latest", "golden", "golden-dot", "local"],
+        help=(
+            "Upgrade target: latest, golden (base only), golden-dot "
+            "(with dot release), or local (install from "
+            "data/upgrade_version/stagent[64].msi)"
+        ),
     )
     upgrade_parser.add_argument(
         "--from-version", type=str, default=None,
@@ -142,11 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--action", type=int, default=None,
-        choices=[2, 3],
+        choices=[2, 3, 4],
         help=(
             "Action to perform at reboot timing: "
             "2 = kill stAgentSvcMon then reboot, "
-            "3 = kill stAgentSvcMon + msiexec then reboot"
+            "3 = kill stAgentSvcMon + msiexec then reboot, "
+            "4 = kill stAgentSvcMon + msiexec + stAgentSvc then reboot"
         ),
     )
     upgrade_parser.add_argument(
@@ -652,6 +657,9 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
             dot=(args.target == "golden-dot"),
             invite_email=args.email,
         )
+
+    elif args.target == "local":
+        result = runner.run_upgrade_from_local(invite_email=args.email)
 
     else:
         print(f"Error: Unknown target '{args.target}'")

@@ -21,6 +21,7 @@ from util_config import UpgradeConfig
 from util_installer import (
     InstallerManager,
     BASE_VERSION_DIR, INSTALLER_JSON,
+    find_upgrade_installer,
 )
 from util_log import LOG_DIR, build_log_dir_name, rename_log_dir, setup_folder_logging
 from util_verify import (
@@ -655,6 +656,246 @@ class UpgradeRunner:
         finally:
             self._cleanup()
 
+    def run_upgrade_from_local(
+        self,
+        invite_email: Optional[str] = None,
+    ) -> UpgradeResult:
+        """
+        Scenario: Install base client, then install upgrade MSI from
+        data/upgrade_version/ and monitor the upgrade lifecycle.
+
+        Flow:
+        1. Uninstall existing client and install the base MSI
+           (email invite + rename if *invite_email* is provided).
+        2. Sync tenant config and detect watchdog mode.
+        3. Start timing monitor and upgrade MSI install concurrently.
+        4. Wait for the new stAgentSvc version to be running.
+        5. Settle 10 s, then run posture validation.
+
+        The upgrade MSI is chosen by bitness:
+        - 32-bit target: data/upgrade_version/stagent.msi
+        - 64-bit target: data/upgrade_version/stagent64.msi
+
+        :param invite_email: Email to send enrollment invite before base install.
+        :return: UpgradeResult with outcome details.
+        """
+        scenario = "upgrade_from_local"
+        start_time = time.time()
+        log.info("=" * 70)
+        log.info("SCENARIO: Upgrade from Local MSI")
+        log.info(
+            "  source_64_bit: %s, target_64_bit: %s",
+            self.source_64_bit, self.target_64_bit,
+        )
+        log.info("=" * 70)
+        try:
+            # Verify upgrade MSI exists before doing anything else
+            upgrade_installer = find_upgrade_installer(self.target_64_bit)
+            if upgrade_installer is None:
+                msi_name = "stagent64.msi" if self.target_64_bit else "stagent.msi"
+                return UpgradeResult(
+                    success=False,
+                    scenario=scenario,
+                    version_before="unknown",
+                    version_after="unknown",
+                    expected_version="unknown",
+                    webui_version="",
+                    elapsed_seconds=0.0,
+                    message=(
+                        f"Upgrade MSI not found: "
+                        f"data/upgrade_version/{msi_name}"
+                    ),
+                    service_running=False,
+                    critical_failure=True,
+                )
+
+            # Phase 1: Ensure base client is installed
+            self._check_stopped()
+            self._installer.ensure_client_installed(
+                from_version=None, invite_email=invite_email,
+            )
+            self._check_stopped()
+            self._sync_and_detect_config()
+            skip = self._skip_if_timing_not_applicable(scenario, start_time)
+            if skip:
+                return skip
+
+            # Phase 2: Read version before upgrade
+            self._check_stopped()
+            self._init_nsclient()
+            version_before = self._verifier.get_current_version()
+            log.info("Version before upgrade: %s", version_before)
+
+            # Determine expected version from the upgrade MSI subject
+            raw_subject = LocalClient.get_msi_subject(upgrade_installer)
+            if raw_subject:
+                expected_raw = (
+                    raw_subject.rsplit(" ", 1)[-1]
+                    if " " in raw_subject else raw_subject
+                )
+            else:
+                expected_raw = "unknown"
+            expected = self._apply_64bit_suffix(expected_raw)
+            log.info(
+                "Upgrade MSI: %s — expected version: %s",
+                upgrade_installer.name, expected,
+            )
+
+            # Create scenario log folder now that versions are known
+            self._create_log_dir(version_before, expected)
+
+            # Phase 3: Start timing monitor and install upgrade MSI
+            # concurrently.  The monitor daemon detects timing events
+            # while msiexec performs the upgrade in a background thread.
+            monitor = self._start_monitor(
+                version_before=version_before,
+                expected_version=expected,
+                scenario=scenario,
+            )
+
+            install_error: list[Optional[Exception]] = [None]
+            install_done = threading.Event()
+
+            def _install_worker() -> None:
+                try:
+                    self.client.install_msi(
+                        str(upgrade_installer),
+                        log_dir=self._log_dir,
+                    )
+                except Exception as exc:
+                    install_error[0] = exc
+                finally:
+                    install_done.set()
+
+            install_thread = threading.Thread(
+                target=_install_worker,
+                daemon=True,
+                name="local-upgrade-install",
+            )
+            install_thread.start()
+            log.info(
+                "Upgrade MSI install started — monitor and install "
+                "running concurrently"
+            )
+
+            # Wait for new stAgentSvc version running; settle for 10 s
+            completed = monitor.wait_for_upgrade_complete(
+                timeout=self.cfg.max_wait_seconds,
+                settle_time=10.0,
+            )
+
+            # Give install thread up to 10 s to finish after upgrade is done
+            install_done.wait(timeout=10)
+            exc = install_error[0]
+            if exc is not None and not monitor.state.reboot_triggered:
+                log.warning("Upgrade MSI install raised: %s", exc)
+                if isinstance(exc, RuntimeError):
+                    raise exc
+                raise RuntimeError(
+                    f"Upgrade MSI install failed: {exc}"
+                ) from exc
+
+            # Check for crash dumps
+            crash_found, zero_count = LocalClient.check_crash_dumps()
+            if zero_count > 0:
+                log.info("Cleaned %d zero-byte dump files", zero_count)
+            if crash_found:
+                log.error("Crash dump detected during local upgrade!")
+                effective_64 = self.target_64_bit or self.source_64_bit
+                LocalClient.handle_crash(
+                    effective_64, self._log_dir or LOG_DIR,
+                )
+
+            version_after = self._verifier.get_current_version()
+
+            # Stop monitor and print timing report
+            self._stop_monitor(monitor)
+
+            # Wait for posture to settle after timing 12
+            self._wait_posture_settle(monitor)
+
+            # Post-upgrade checks (no WebUI version check for local scenario)
+            service_running = self._verifier.verify_service_running()
+            validation_ok, exe_validation, uninstall_entry = (
+                self._verifier.validate_pre_report(version_after)
+            )
+
+            elapsed = time.time() - start_time
+            version_ok = (expected == "unknown" or version_after == expected)
+            success = (
+                completed and version_ok and service_running
+                and validation_ok and not crash_found
+            )
+            if not completed:
+                message = (
+                    f"Local upgrade timed out — "
+                    f"{version_before} -> {version_after}"
+                )
+            elif version_ok:
+                message = (
+                    f"Local upgrade successful: "
+                    f"{version_before} -> {version_after}"
+                )
+            else:
+                message = (
+                    f"Local upgrade FAILED: expected {expected}, "
+                    f"got {version_after}"
+                )
+            if crash_found:
+                message += " — CRASH DUMP DETECTED"
+            message += format_validation_issues(
+                service_running, exe_validation, uninstall_entry,
+            )
+            driver_note = check_driver_install_log(
+                exe_validation, service_running,
+            )
+            if driver_note:
+                message += driver_note
+            log.info(message)
+
+            result = UpgradeResult(
+                success=success,
+                scenario=scenario,
+                version_before=version_before,
+                version_after=version_after,
+                expected_version=expected,
+                webui_version="",
+                elapsed_seconds=elapsed,
+                message=message,
+                service_running=service_running,
+                exe_validation=exe_validation,
+                uninstall_entry=uninstall_entry,
+                critical_failure=(
+                    False
+                    if driver_note or is_mismatch_only_failure(
+                        exe_validation, service_running, uninstall_entry,
+                    )
+                    else not validation_ok
+                ),
+            )
+            if not result.success:
+                self._collect_failure_logs_local()
+            return result
+
+        except Exception as exc:
+            elapsed = time.time() - start_time
+            log.exception("Scenario %s failed with exception", scenario)
+            self._collect_failure_logs_local()
+            return UpgradeResult(
+                success=False,
+                scenario=scenario,
+                version_before="unknown",
+                version_after="unknown",
+                expected_version="unknown",
+                webui_version="",
+                elapsed_seconds=elapsed,
+                message=f"Exception: {exc}",
+                service_running=False,
+                critical_failure=isinstance(exc, UninstallCriticalError),
+            )
+        finally:
+            self._cleanup()
+
     # ── Timing Monitor ───────────────────────────────────────────────
 
     def _start_monitor(
@@ -994,6 +1235,19 @@ class UpgradeRunner:
         log_dir = self._log_dir or LOG_DIR
         effective_64 = self.target_64_bit or self.source_64_bit
         log.info("Collecting log bundle for failure analysis...")
+        LocalClient.collect_log_bundle(effective_64, log_dir)
+
+    def _collect_failure_logs_local(self) -> None:
+        """
+        Collect nsdiag log bundle for a failed local upgrade scenario.
+
+        Unlike :meth:`_collect_failure_logs`, this method always collects
+        because the upgrade was triggered by msiexec (not a WebUI call),
+        so ``_upgrade_enabled`` is never set in the local scenario.
+        """
+        log_dir = self._log_dir or LOG_DIR
+        effective_64 = self.target_64_bit or self.source_64_bit
+        log.info("Collecting log bundle for local upgrade failure...")
         LocalClient.collect_log_bundle(effective_64, log_dir)
 
     @property
