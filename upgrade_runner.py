@@ -78,6 +78,7 @@ class UpgradeRunner:
         reboot_time: Optional[int] = None,
         reboot_delay: int = 5,
         reboot_action: Optional[int] = None,
+        standby: Optional[str] = None,
         stop_event: Optional[threading.Event] = None,
         log_dir: Optional[Path] = None,
         email_profiles: Optional[dict[str, str]] = None,
@@ -116,6 +117,7 @@ class UpgradeRunner:
         self.reboot_time = reboot_time
         self.reboot_delay = reboot_delay
         self.reboot_action = reboot_action
+        self.standby = standby
         self.stop_event = stop_event or threading.Event()
         self._upgrade_enabled = False
         self._log_dir: Optional[Path] = log_dir
@@ -920,6 +922,7 @@ class UpgradeRunner:
             source_64_bit=self.source_64_bit,
             original_argv=self._original_argv,
             watchdog_mode=self._watchdog_mode,
+            standby=self.standby,
         )
         monitor.start()
 

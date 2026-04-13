@@ -41,6 +41,7 @@ NS_MSI_DOWNLOAD_PATH = Path(
 MSI_MIN_SIZE = 25 * 1024 * 1024  # 25 MB threshold
 
 TOTAL_TIMINGS = 13
+STANDBY_WAKE_SECONDS = 30  # seconds the system sleeps before auto-wake
 
 
 # ── Timing events enum ──────────────────────────────────────────────
@@ -119,6 +120,12 @@ class MonitorState:
     # Original sys.argv[1:] from the manual main.py invocation — used by
     # cmd_continue to map the post-reboot result back into the batch record.
     original_argv: list[str] = field(default_factory=list)
+
+    # Standby mode: "s0" or "s1" — when set, the configured timing puts
+    # the system into sleep instead of triggering a reboot.  The monitor
+    # thread resumes automatically after the system wakes.
+    standby: Optional[str] = None
+    standby_triggered: bool = False
 
 
 # ── State persistence ────────────────────────────────────────────────
@@ -349,12 +356,14 @@ class TimingMonitor:
         source_64_bit: bool = False,
         original_argv: list[str] | None = None,
         watchdog_mode: bool = False,
+        standby: Optional[str] = None,
     ) -> None:
         self._target_64_bit = target_64_bit
         self._timeout = timeout
         self._poll_interval = poll_interval
         self._skip_continue_task = skip_continue_task
         self._watchdog_mode = watchdog_mode
+        self._standby = standby
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -385,6 +394,7 @@ class TimingMonitor:
                 scenario=scenario,
                 source_64_bit=source_64_bit,
                 original_argv=original_argv or [],
+                standby=standby,
             )
 
         # Build detector map: timing number -> detector method
@@ -488,9 +498,10 @@ class TimingMonitor:
 
             # ── Timing 1 fast-path reboot ────────────────────────
             # Timing 1 fires during config sync right after the MSI
-            # install.  When reboot_time == 1, prepare and reboot
-            # immediately — do not wait for the monitor thread.
-            if self._state.reboot_time == 1:
+            # install.  When reboot_time == 1 (and not standby), prepare
+            # and reboot immediately — do not wait for the monitor thread.
+            # For standby the monitor thread handles timing 1 directly.
+            if self._state.reboot_time == 1 and not self._state.standby:
                 with self._lock:
                     t1_elapsed = self._state.timings.get("1")
                     already_rebooting = self._state.reboot_triggered
@@ -743,8 +754,12 @@ class TimingMonitor:
                         )
 
                         if self._state.reboot_time == timing_num:
-                            self._trigger_reboot(elapsed)
-                            return
+                            if self._state.standby:
+                                self._trigger_standby(elapsed)
+                                # System woke — continue monitoring
+                            else:
+                                self._trigger_reboot(elapsed)
+                                return
                 except Exception:
                     log.debug(
                         "Detector %d raised exception",
@@ -842,6 +857,62 @@ class TimingMonitor:
                     str(self._state.reboot_delay),
                 ],
                 capture_output=True, text=True, timeout=10,
+            )
+
+    def _trigger_standby(self, elapsed: float) -> None:
+        """
+        Put the system into S0 or S1 standby via the stress_test power API,
+        then return once the system has woken up.
+
+        Thread-safe: only the first caller proceeds; subsequent calls are
+        no-ops (guards against double-trigger if the monitor thread is fast).
+
+        After this method returns the monitor thread continues polling
+        normally — no state file is saved and no scheduled task is created.
+
+        Requires ``C:\\git\\stress_test`` (or equivalent) on PYTHONPATH so
+        that ``tool.power_api`` can be imported.
+
+        :param elapsed: Seconds elapsed since monitor start (for logging).
+        """
+        with self._lock:
+            if self._state.standby_triggered:
+                return
+            self._state.standby_triggered = True
+
+        level = self._state.standby or "s1"
+        log.info(
+            "Timing %d fired (standby %s) — entering %s for %ds",
+            self._state.reboot_time, level, level.upper(), STANDBY_WAKE_SECONDS,
+        )
+        try:
+            from tool.power_api import enter_s0_and_wake, enter_s1_and_wake
+
+            if level == "s0":
+                ok = enter_s0_and_wake(STANDBY_WAKE_SECONDS)
+            else:
+                ok = enter_s1_and_wake(STANDBY_WAKE_SECONDS)
+
+            if ok:
+                log.info(
+                    "System woke from %s standby at %.1fs — "
+                    "resuming monitor",
+                    level.upper(), elapsed,
+                )
+            else:
+                log.warning(
+                    "Standby %s reported failure — "
+                    "resuming monitor anyway",
+                    level.upper(),
+                )
+        except ImportError:
+            log.error(
+                "Cannot import tool.power_api — add C:\\git\\stress_test "
+                "to PYTHONPATH. Standby skipped."
+            )
+        except Exception as exc:
+            log.error(
+                "Standby %s failed: %s — resuming monitor", level.upper(), exc,
             )
 
     # ── Detector helpers ─────────────────────────────────────────

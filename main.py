@@ -145,6 +145,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds to wait after timing fires before rebooting (default: 5)",
     )
     upgrade_parser.add_argument(
+        "--standby", type=str, default=None,
+        choices=["s0", "s1"],
+        help=(
+            "At --reboottime N, enter standby instead of rebooting: "
+            "s0 = modern standby (Connected Standby), "
+            "s1 = classic S1 sleep. "
+            "System auto-wakes after 30 s and upgrade monitoring resumes. "
+            "Requires tool.power_api from C:\\git\\stress_test on PYTHONPATH."
+        ),
+    )
+    upgrade_parser.add_argument(
         "--action", type=int, default=None,
         choices=[2, 3, 4],
         help=(
@@ -635,6 +646,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         reboot_time=args.reboottime,
         reboot_delay=args.rebootdelay,
         reboot_action=args.action,
+        standby=args.standby,
         stop_event=stop_event,
         log_dir=log_dir,
         email_profiles=cfg.client.email_profiles,
