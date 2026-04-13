@@ -22,6 +22,7 @@ from util_webui import WebUIClient
 
 BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
 INSTALLER_JSON = Path(__file__).parent / "data" / "installer.json"
+UPGRADE_VERSION_DIR = Path(__file__).parent / "data" / "upgrade_version"
 
 log = logging.getLogger(__name__)
 
@@ -525,6 +526,26 @@ def extract_token_from_url(download_link: str) -> str:
             f"{download_link}"
         )
     return token
+
+
+def find_upgrade_installer(is_64_bit: bool) -> Optional[Path]:
+    """
+    Find the local upgrade MSI from data/upgrade_version/.
+
+    Expected file names:
+    - 32-bit: stagent.msi
+    - 64-bit: stagent64.msi
+
+    :param is_64_bit: True for 64-bit installer, False for 32-bit.
+    :return: Path to the MSI file, or None if not found.
+    """
+    name = "stagent64.msi" if is_64_bit else "stagent.msi"
+    path = UPGRADE_VERSION_DIR / name
+    if path.is_file():
+        log.info("Found upgrade installer: %s", path)
+        return path
+    log.warning("Upgrade installer not found: %s", path)
+    return None
 
 
 def resolve_installer(

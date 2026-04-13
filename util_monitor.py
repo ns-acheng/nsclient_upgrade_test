@@ -41,6 +41,7 @@ NS_MSI_DOWNLOAD_PATH = Path(
 MSI_MIN_SIZE = 25 * 1024 * 1024  # 25 MB threshold
 
 TOTAL_TIMINGS = 13
+STANDBY_WAKE_SECONDS = 30  # seconds the system sleeps before auto-wake
 
 
 # ── Timing events enum ──────────────────────────────────────────────
@@ -120,6 +121,12 @@ class MonitorState:
     # cmd_continue to map the post-reboot result back into the batch record.
     original_argv: list[str] = field(default_factory=list)
 
+    # Standby mode: "s0" or "s1" — when set, the configured timing puts
+    # the system into sleep instead of triggering a reboot.  The monitor
+    # thread resumes automatically after the system wakes.
+    standby: Optional[str] = None
+    standby_triggered: bool = False
+
 
 # ── State persistence ────────────────────────────────────────────────
 
@@ -170,7 +177,7 @@ def create_continue_task(
 ) -> None:
     """
     Create a Windows Task Scheduler task that runs ``python main.py continue``
-    after user logon with a 30-second delay.
+    at user logon with no delay.
     """
     bat = bat_path or MONITOR_BAT_PATH
     name = task_name or MONITOR_TASK_NAME
@@ -199,7 +206,6 @@ def create_continue_task(
             "/tn", name,
             "/tr", str(bat),
             "/sc", "ONLOGON",
-            "/delay", "0000:30",
             "/rl", "HIGHEST",
             "/it",
             "/f",
@@ -350,12 +356,14 @@ class TimingMonitor:
         source_64_bit: bool = False,
         original_argv: list[str] | None = None,
         watchdog_mode: bool = False,
+        standby: Optional[str] = None,
     ) -> None:
         self._target_64_bit = target_64_bit
         self._timeout = timeout
         self._poll_interval = poll_interval
         self._skip_continue_task = skip_continue_task
         self._watchdog_mode = watchdog_mode
+        self._standby = standby
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -386,6 +394,7 @@ class TimingMonitor:
                 scenario=scenario,
                 source_64_bit=source_64_bit,
                 original_argv=original_argv or [],
+                standby=standby,
             )
 
         # Build detector map: timing number -> detector method
@@ -487,6 +496,27 @@ class TimingMonitor:
                 log.info("All timings already detected")
                 return True
 
+            # ── Timing 1 fast-path reboot ────────────────────────
+            # Timing 1 fires during config sync right after the MSI
+            # install.  When reboot_time == 1 (and not standby), prepare
+            # and reboot immediately — do not wait for the monitor thread.
+            # For standby the monitor thread handles timing 1 directly.
+            if self._state.reboot_time == 1 and not self._state.standby:
+                with self._lock:
+                    t1_elapsed = self._state.timings.get("1")
+                    already_rebooting = self._state.reboot_triggered
+                if t1_elapsed is not None and not already_rebooting:
+                    log.info(
+                        "Timing 1 detected at %.1fs — triggering "
+                        "immediate reboot (fast-path)",
+                        t1_elapsed,
+                    )
+                    self._trigger_reboot(t1_elapsed)
+                if self._state.reboot_triggered:
+                    # Wait for the machine to go down
+                    self._stop_event.wait(timeout=60)
+                    return False
+
             # Extend deadline once when upgrade activity is detected
             if not deadline_extended:
                 with self._lock:
@@ -501,6 +531,44 @@ class TimingMonitor:
                         "Upgrade activity detected — extending "
                         "deadline by %.0fs", extend_timeout,
                     )
+
+            # ── Timing 13: stAgentSvcMon.exe upgraded on disk ──
+            with self._lock:
+                timing_13_detected = "13" in self._state.timings
+            if timing_13_detected:
+                watchdog = LocalClient.is_watchdog_mode()
+                if watchdog:
+                    mon_wait_end = time.time() + 10.0
+                    mon_running = False
+                    while time.time() < mon_wait_end:
+                        if _is_process_running("stAgentSvcMon.exe"):
+                            mon_running = True
+                            break
+                        time.sleep(1.0)
+                    if mon_running:
+                        log.info(
+                            "Timing 13 (watchdog): "
+                            "stAgentSvcMon.exe confirmed running "
+                            "— upgrade complete. "
+                            "Settling for %.0fs...",
+                            settle_time,
+                        )
+                    else:
+                        log.warning(
+                            "Timing 13 (watchdog): "
+                            "stAgentSvcMon.exe not running after "
+                            "10s — considering upgrade complete. "
+                            "Settling for %.0fs...",
+                            settle_time,
+                        )
+                else:
+                    log.info(
+                        "Timing 13 (non-watchdog): upgrade "
+                        "complete. Settling for %.0fs...",
+                        settle_time,
+                    )
+                self._all_detected.wait(timeout=settle_time)
+                return True
 
             svc_info = LocalClient.query_service("stAgentSvc")
             svc_running = (
@@ -686,8 +754,12 @@ class TimingMonitor:
                         )
 
                         if self._state.reboot_time == timing_num:
-                            self._trigger_reboot(elapsed)
-                            return
+                            if self._state.standby:
+                                self._trigger_standby(elapsed)
+                                # System woke — continue monitoring
+                            else:
+                                self._trigger_reboot(elapsed)
+                                return
                 except Exception:
                     log.debug(
                         "Detector %d raised exception",
@@ -716,15 +788,24 @@ class TimingMonitor:
     def _trigger_reboot(self, elapsed: float) -> None:
         """Save state, create scheduled task, and trigger reboot.
 
+        Thread-safe: only the first caller proceeds; subsequent calls
+        are no-ops (guards against the monitor thread and the
+        ``wait_for_upgrade_complete`` fast-path racing).
+
         When ``reboot_action`` is set the reboot sequence changes:
 
         * **Action 2** — kill ``stAgentSvcMon.exe`` then reboot immediately.
         * **Action 3** — kill ``stAgentSvcMon.exe`` **and** ``msiexec.exe``
           then reboot immediately.
+        * **Action 4** — kill ``stAgentSvcMon.exe``, ``stAgentSvc.exe``,
+          **and** ``msiexec.exe`` then reboot immediately.
         * **None / default** — reboot after ``reboot_delay`` seconds.
         """
-        self._state.reboot_triggered = True
-        self._state.pre_reboot_elapsed = elapsed
+        with self._lock:
+            if self._state.reboot_triggered:
+                return
+            self._state.reboot_triggered = True
+            self._state.pre_reboot_elapsed = elapsed
         save_monitor_state(self._state)
 
         if self._skip_continue_task:
@@ -737,17 +818,23 @@ class TimingMonitor:
 
         action = self._state.reboot_action
 
-        if action in (2, 3):
+        if action in (2, 3, 4):
             # Kill stAgentSvcMon.exe
             log.info("Action %d: killing stAgentSvcMon.exe", action)
             subprocess.run(
                 ["taskkill", "/F", "/IM", "stAgentSvcMon.exe"],
                 capture_output=True, text=True, timeout=10,
             )
-            if action == 3:
-                log.info("Action 3: killing msiexec.exe")
+            if action in (3, 4):
+                log.info("Action %d: killing msiexec.exe", action)
                 subprocess.run(
                     ["taskkill", "/F", "/IM", "msiexec.exe"],
+                    capture_output=True, text=True, timeout=10,
+                )
+            if action == 4:
+                log.info("Action 4: killing stAgentSvc.exe")
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "stAgentSvc.exe"],
                     capture_output=True, text=True, timeout=10,
                 )
             log.info(
@@ -770,6 +857,62 @@ class TimingMonitor:
                     str(self._state.reboot_delay),
                 ],
                 capture_output=True, text=True, timeout=10,
+            )
+
+    def _trigger_standby(self, elapsed: float) -> None:
+        """
+        Put the system into S0 or S1 standby via the stress_test power API,
+        then return once the system has woken up.
+
+        Thread-safe: only the first caller proceeds; subsequent calls are
+        no-ops (guards against double-trigger if the monitor thread is fast).
+
+        After this method returns the monitor thread continues polling
+        normally — no state file is saved and no scheduled task is created.
+
+        Requires ``C:\\git\\stress_test`` (or equivalent) on PYTHONPATH so
+        that ``tool.power_api`` can be imported.
+
+        :param elapsed: Seconds elapsed since monitor start (for logging).
+        """
+        with self._lock:
+            if self._state.standby_triggered:
+                return
+            self._state.standby_triggered = True
+
+        level = self._state.standby or "s1"
+        log.info(
+            "Timing %d fired (standby %s) — entering %s for %ds",
+            self._state.reboot_time, level, level.upper(), STANDBY_WAKE_SECONDS,
+        )
+        try:
+            from tool.power_api import enter_s0_and_wake, enter_s1_and_wake
+
+            if level == "s0":
+                ok = enter_s0_and_wake(STANDBY_WAKE_SECONDS)
+            else:
+                ok = enter_s1_and_wake(STANDBY_WAKE_SECONDS)
+
+            if ok:
+                log.info(
+                    "System woke from %s standby at %.1fs — "
+                    "resuming monitor",
+                    level.upper(), elapsed,
+                )
+            else:
+                log.warning(
+                    "Standby %s reported failure — "
+                    "resuming monitor anyway",
+                    level.upper(),
+                )
+        except ImportError:
+            log.error(
+                "Cannot import tool.power_api — add C:\\git\\stress_test "
+                "to PYTHONPATH. Standby skipped."
+            )
+        except Exception as exc:
+            log.error(
+                "Standby %s failed: %s — resuming monitor", level.upper(), exc,
             )
 
     # ── Detector helpers ─────────────────────────────────────────
@@ -924,4 +1067,4 @@ class TimingMonitor:
             or current_version == self._state.initial_mon_version
         ):
             return False
-        return _is_process_running("stAgentSvcMon.exe")
+        return True

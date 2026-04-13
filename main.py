@@ -112,8 +112,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--target", required=True,
-        choices=["latest", "golden", "golden-dot"],
-        help="Upgrade target: latest, golden (base only), or golden-dot (with dot release)",
+        choices=["latest", "golden", "golden-dot", "local"],
+        help=(
+            "Upgrade target: latest, golden (base only), golden-dot "
+            "(with dot release), or local (install from "
+            "data/upgrade_version/stagent[64].msi)"
+        ),
     )
     upgrade_parser.add_argument(
         "--from-version", type=str, default=None,
@@ -141,12 +145,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds to wait after timing fires before rebooting (default: 5)",
     )
     upgrade_parser.add_argument(
+        "--standby", type=str, default=None,
+        choices=["s0", "s1"],
+        help=(
+            "At --reboottime N, enter standby instead of rebooting: "
+            "s0 = modern standby (Connected Standby), "
+            "s1 = classic S1 sleep. "
+            "System auto-wakes after 30 s and upgrade monitoring resumes. "
+            "Requires tool.power_api from C:\\git\\stress_test on PYTHONPATH."
+        ),
+    )
+    upgrade_parser.add_argument(
         "--action", type=int, default=None,
-        choices=[2, 3],
+        choices=[2, 3, 4],
         help=(
             "Action to perform at reboot timing: "
             "2 = kill stAgentSvcMon then reboot, "
-            "3 = kill stAgentSvcMon + msiexec then reboot"
+            "3 = kill stAgentSvcMon + msiexec then reboot, "
+            "4 = kill stAgentSvcMon + msiexec + stAgentSvc then reboot"
         ),
     )
     upgrade_parser.add_argument(
@@ -401,25 +417,31 @@ def cmd_continue(args: argparse.Namespace) -> int:
         setup_folder_logging(log_dir, log_filename="upgrade_continue.log")
         log.info("Reusing pre-reboot log folder: %s", log_dir)
 
-    watchdog_mode = LocalClient.is_watchdog_mode()
-    log.info("Resuming timing monitor from saved state (watchdog=%s)", watchdog_mode)
-    monitor = TimingMonitor(
-        target_64_bit=state.target_64_bit,
-        reboot_time=None,
-        timeout=args.timeout,
-        state=state,
-        watchdog_mode=watchdog_mode,
-    )
-    monitor.start()
-    completed = monitor.wait_for_upgrade_complete(
-        timeout=args.timeout,
-        extend_timeout=0,   # no extension — upgrade already in progress
-    )
-    monitor.stop()
-    monitor.print_report()
+    # ── Early post-reboot check: UpgradeInProgress registry key ────
+    # If the key is gone the upgrade already finished — skip the
+    # monitor wait and go straight to post-upgrade validation.
+    upgrade_still_running = _check_upgrade_in_progress(state)
 
-    # Wait for posture to settle after timing 12 (30s from detection)
-    _wait_posture_settle(monitor)
+    if upgrade_still_running:
+        log.info("Resuming timing monitor from saved state")
+        monitor = TimingMonitor(
+            target_64_bit=state.target_64_bit,
+            reboot_time=None,
+            timeout=args.timeout,
+            state=state,
+        )
+        monitor.start()
+        completed = monitor.wait_for_upgrade_complete(
+            timeout=args.timeout,
+        )
+        monitor.stop()
+        monitor.print_report()
+    else:
+        log.info(
+            "UpgradeInProgress key absent — upgrade already "
+            "finished, skipping monitor wait"
+        )
+        completed = True
 
     clear_monitor_state()
     delete_continue_task()
@@ -553,6 +575,31 @@ def _run_post_reboot_validation(
     )
 
 
+def _check_upgrade_in_progress(state: "MonitorState") -> bool:
+    """
+    Early post-reboot check for ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``.
+
+    :return: True if the upgrade is still in progress (key exists or
+             service is still old with key present) — the caller should
+             run the timing monitor.  False if the key is absent —
+             upgrade is done, skip straight to validation.
+    """
+    from util_client import LocalClient
+
+    key_exists = LocalClient.check_upgrade_in_progress()
+    if key_exists:
+        log.info("UpgradeInProgress key present — upgrade still running")
+        return True
+
+    current_version = _get_local_version(state.target_64_bit)
+    log.info(
+        "UpgradeInProgress key absent (version: %s → %s) — "
+        "upgrade finished, proceeding to validation",
+        state.version_before, current_version,
+    )
+    return False
+
+
 def _get_local_version(target_64_bit: bool) -> str:
     """Read installed version from the local stAgentSvc.exe or registry."""
     from util_client import LocalClient
@@ -599,6 +646,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         reboot_time=args.reboottime,
         reboot_delay=args.rebootdelay,
         reboot_action=args.action,
+        standby=args.standby,
         stop_event=stop_event,
         log_dir=log_dir,
         email_profiles=cfg.client.email_profiles,
@@ -621,6 +669,9 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
             dot=(args.target == "golden-dot"),
             invite_email=args.email,
         )
+
+    elif args.target == "local":
+        result = runner.run_upgrade_from_local(invite_email=args.email)
 
     else:
         print(f"Error: Unknown target '{args.target}'")
@@ -858,18 +909,36 @@ def _try_record_manual_result(
     try:
         import shlex
         from util_batch import (
-            BATCH_JSON, BATCH_RECORD_JSON, apply_result_to_test,
-            create_record, generate_html_report, load_batch_config,
-            load_record, save_record,
+            BATCH_JSON, BATCH_RECORD_JSON,
+            BATCH_LOCAL_JSON, BATCH_RECORD_LOCAL_JSON,
+            apply_result_to_test, create_record, generate_html_report,
+            load_batch_config, load_record, save_record,
         )
 
-        record = load_record(BATCH_RECORD_JSON)
+        # Route --target local runs to the dedicated local batch files.
+        is_local_target = False
+        try:
+            tidx = argv.index("--target")
+            if tidx + 1 < len(argv) and argv[tidx + 1] == "local":
+                is_local_target = True
+        except (ValueError, IndexError):
+            pass
+
+        batch_json = BATCH_LOCAL_JSON if is_local_target else BATCH_JSON
+        batch_record_json = (
+            BATCH_RECORD_LOCAL_JSON if is_local_target else BATCH_RECORD_JSON
+        )
+        report_html = batch_record_json.parent / (
+            "batch_report_local.html" if is_local_target else "batch_report.html"
+        )
+
+        record = load_record(batch_record_json)
         if record is None:
-            if not BATCH_JSON.exists():
+            if not batch_json.exists():
                 return
-            base_args, tests = load_batch_config(BATCH_JSON)
+            base_args, tests = load_batch_config(batch_json)
             record = create_record(base_args, tests)
-            log.info("Created batch record from %s", BATCH_JSON)
+            log.info("Created batch record from %s", batch_json)
 
         manual_set = _normalize_argv(argv)
         is_failure = not result.success
@@ -904,11 +973,8 @@ def _try_record_manual_result(
                 "started_at": started_at,
                 "finished_at": datetime.now().isoformat(timespec="seconds"),
             })
-            save_record(record, BATCH_RECORD_JSON)
-            generate_html_report(
-                record,
-                BATCH_RECORD_JSON.parent / "batch_report.html",
-            )
+            save_record(record, batch_record_json)
+            generate_html_report(record, report_html)
             log.info("Manual result mapped to batch test [%s]", test.id)
             return
     except Exception as exc:

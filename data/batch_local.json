@@ -1,5 +1,5 @@
 {
-    "base_args": "upgrade --target latest --email acheng@netskope.com",
+    "base_args": "upgrade --target local --email acheng@netskope.com",
     "tests": [
 
         {"id": "32to32",               "extra_args": ""},

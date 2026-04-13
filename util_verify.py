@@ -318,6 +318,8 @@ def is_mismatch_only_failure(
         return False
     if exe_validation is None or not exe_validation.version_mismatches:
         return False
+    if exe_validation.watchdog_duplicate:
+        return False
     return not exe_validation.missing and not exe_validation.stale_arch_files
 
 
@@ -351,6 +353,8 @@ def format_validation_issues(
         )
     if exe_validation and exe_validation.stwatchdog_running is False:
         issues.append("stwatchdog service not running")
+    if exe_validation and exe_validation.watchdog_duplicate:
+        issues.append(exe_validation.watchdog_duplicate)
     if uninstall_entry and not uninstall_entry.found:
         issues.append("uninstall registry entry missing")
     if issues:

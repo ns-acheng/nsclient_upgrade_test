@@ -28,6 +28,8 @@ from typing import Optional
 from util_batch import (
     BATCH_JSON,
     BATCH_RECORD_JSON,
+    BATCH_LOCAL_JSON,
+    BATCH_RECORD_LOCAL_JSON,
     BatchRecord,
     TestRun,
     apply_result_to_test,
@@ -106,7 +108,8 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
 
     :return: 0 if all tests passed, 1 if any failed or batch was stopped.
     """
-    report_path = record_path.parent / "batch_report.html"
+    report_name = record_path.stem.replace("batch_record", "batch_report") + ".html"
+    report_path = record_path.parent / report_name
     stop_event = threading.Event()
     start_input_monitor(stop_event)
 
@@ -417,7 +420,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     if record is None:
         print("Error: No batch record found.")
         return 1
-    report_path = record_path.parent / "batch_report.html"
+    report_name = record_path.stem.replace("batch_record", "batch_report") + ".html"
+    report_path = record_path.parent / report_name
     out = generate_html_report(record, report_path)
     print(f"Report generated: {out}")
     return 0
@@ -463,6 +467,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="batch",
         description="Batch Netskope Client upgrade test runner",
+    )
+    parser.add_argument(
+        "--local", action="store_true",
+        help=(
+            "Use local-MSI batch files: "
+            "data/batch_local.json + log/batch_record_local.json"
+        ),
     )
     parser.add_argument(
         "--batch", default=str(BATCH_JSON),
@@ -511,6 +522,14 @@ def main() -> int:
     args = parser.parse_args()
     setup_logging(verbose=args.verbose, file_logging=False)
     setup_batch_logging()
+
+    # --local overrides batch/record paths unless the user explicitly
+    # passed --batch or --record themselves.
+    if args.local:
+        if args.batch == str(BATCH_JSON):
+            args.batch = str(BATCH_LOCAL_JSON)
+        if args.record == str(BATCH_RECORD_JSON):
+            args.record = str(BATCH_RECORD_LOCAL_JSON)
 
     if args.report:
         return cmd_report(args)
