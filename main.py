@@ -897,18 +897,36 @@ def _try_record_manual_result(
     try:
         import shlex
         from util_batch import (
-            BATCH_JSON, BATCH_RECORD_JSON, apply_result_to_test,
-            create_record, generate_html_report, load_batch_config,
-            load_record, save_record,
+            BATCH_JSON, BATCH_RECORD_JSON,
+            BATCH_LOCAL_JSON, BATCH_RECORD_LOCAL_JSON,
+            apply_result_to_test, create_record, generate_html_report,
+            load_batch_config, load_record, save_record,
         )
 
-        record = load_record(BATCH_RECORD_JSON)
+        # Route --target local runs to the dedicated local batch files.
+        is_local_target = False
+        try:
+            tidx = argv.index("--target")
+            if tidx + 1 < len(argv) and argv[tidx + 1] == "local":
+                is_local_target = True
+        except (ValueError, IndexError):
+            pass
+
+        batch_json = BATCH_LOCAL_JSON if is_local_target else BATCH_JSON
+        batch_record_json = (
+            BATCH_RECORD_LOCAL_JSON if is_local_target else BATCH_RECORD_JSON
+        )
+        report_html = batch_record_json.parent / (
+            "batch_report_local.html" if is_local_target else "batch_report.html"
+        )
+
+        record = load_record(batch_record_json)
         if record is None:
-            if not BATCH_JSON.exists():
+            if not batch_json.exists():
                 return
-            base_args, tests = load_batch_config(BATCH_JSON)
+            base_args, tests = load_batch_config(batch_json)
             record = create_record(base_args, tests)
-            log.info("Created batch record from %s", BATCH_JSON)
+            log.info("Created batch record from %s", batch_json)
 
         manual_set = _normalize_argv(argv)
         is_failure = not result.success
@@ -943,11 +961,8 @@ def _try_record_manual_result(
                 "started_at": started_at,
                 "finished_at": datetime.now().isoformat(timespec="seconds"),
             })
-            save_record(record, BATCH_RECORD_JSON)
-            generate_html_report(
-                record,
-                BATCH_RECORD_JSON.parent / "batch_report.html",
-            )
+            save_record(record, batch_record_json)
+            generate_html_report(record, report_html)
             log.info("Manual result mapped to batch test [%s]", test.id)
             return
     except Exception as exc:

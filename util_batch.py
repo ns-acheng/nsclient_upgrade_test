@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 
 BATCH_JSON = Path(__file__).parent / "data" / "batch.json"
 BATCH_RECORD_JSON = Path(__file__).parent / "log" / "batch_record.json"
+BATCH_LOCAL_JSON = Path(__file__).parent / "data" / "batch_local.json"
+BATCH_RECORD_LOCAL_JSON = Path(__file__).parent / "log" / "batch_record_local.json"
 BATCH_TASK_NAME = "NsClientBatchContinue"
 _MAIN_PY = Path(__file__).parent / "main.py"
 
