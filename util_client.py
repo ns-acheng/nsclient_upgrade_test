@@ -1002,12 +1002,41 @@ class LocalClient:
         return found, zero_count
 
     @staticmethod
+    def _collect_event_logs(output_dir: Path, timestamp: str) -> None:
+        """
+        Export Windows Event Log System and Application channels to .evtx files.
+
+        :param output_dir: Directory to write the exported log files into.
+        :param timestamp: Timestamp string used as a filename prefix.
+        """
+        for channel in ("System", "Application"):
+            output_file = output_dir / f"{timestamp}_event_log_{channel.lower()}.evtx"
+            log.info("Collecting Windows Event Log (%s) -> %s", channel, output_file)
+            try:
+                result = subprocess.run(
+                    ["wevtutil.exe", "epl", channel, str(output_file)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode != 0:
+                    log.warning(
+                        "Event log export failed for %s (exit %d): %s",
+                        channel, result.returncode, result.stderr,
+                    )
+                else:
+                    log.info("Event log exported: %s", output_file)
+            except Exception as exc:
+                log.warning("Event log export failed for %s: %s", channel, exc)
+
+    @staticmethod
     def collect_log_bundle(
         is_64_bit: bool,
         output_dir: Path,
     ) -> Optional[Path]:
         """
         Collect a client log bundle using ``nsdiag.exe -o``.
+
+        Also exports the Windows Event Log System and Application channels
+        as .evtx files into the same directory.
 
         Tries the 64-bit path first, falls back to 32-bit.
 
@@ -1033,6 +1062,8 @@ class LocalClient:
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = output_dir / f"{timestamp}_log_bundle.zip"
+
+        LocalClient._collect_event_logs(output_dir, timestamp)
 
         log.info("Collecting log bundle: %s -o %s", nsdiag, output_file)
         try:
