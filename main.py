@@ -401,17 +401,31 @@ def cmd_continue(args: argparse.Namespace) -> int:
         setup_folder_logging(log_dir, log_filename="upgrade_continue.log")
         log.info("Reusing pre-reboot log folder: %s", log_dir)
 
-    log.info("Resuming timing monitor from saved state")
-    monitor = TimingMonitor(
-        target_64_bit=state.target_64_bit,
-        reboot_time=None,
-        timeout=args.timeout,
-        state=state,
-    )
-    monitor.start()
-    completed = monitor.wait_for_upgrade_complete(timeout=args.timeout)
-    monitor.stop()
-    monitor.print_report()
+    # ── Early post-reboot check: UpgradeInProgress registry key ────
+    # If the key is gone the upgrade already finished — skip the
+    # monitor wait and go straight to post-upgrade validation.
+    upgrade_still_running = _check_upgrade_in_progress(state)
+
+    if upgrade_still_running:
+        log.info("Resuming timing monitor from saved state")
+        monitor = TimingMonitor(
+            target_64_bit=state.target_64_bit,
+            reboot_time=None,
+            timeout=args.timeout,
+            state=state,
+        )
+        monitor.start()
+        completed = monitor.wait_for_upgrade_complete(
+            timeout=args.timeout,
+        )
+        monitor.stop()
+        monitor.print_report()
+    else:
+        log.info(
+            "UpgradeInProgress key absent — upgrade already "
+            "finished, skipping monitor wait"
+        )
+        completed = True
 
     clear_monitor_state()
     delete_continue_task()
@@ -522,6 +536,31 @@ def _run_post_reboot_validation(
             else not validation_ok
         ),
     )
+
+
+def _check_upgrade_in_progress(state: "MonitorState") -> bool:
+    """
+    Early post-reboot check for ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``.
+
+    :return: True if the upgrade is still in progress (key exists or
+             service is still old with key present) — the caller should
+             run the timing monitor.  False if the key is absent —
+             upgrade is done, skip straight to validation.
+    """
+    from util_client import LocalClient
+
+    key_exists = LocalClient.check_upgrade_in_progress()
+    if key_exists:
+        log.info("UpgradeInProgress key present — upgrade still running")
+        return True
+
+    current_version = _get_local_version(state.target_64_bit)
+    log.info(
+        "UpgradeInProgress key absent (version: %s → %s) — "
+        "upgrade finished, proceeding to validation",
+        state.version_before, current_version,
+    )
+    return False
 
 
 def _get_local_version(target_64_bit: bool) -> str:

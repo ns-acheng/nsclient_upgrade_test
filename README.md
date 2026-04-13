@@ -88,8 +88,7 @@ The tool picks the correct file based on platform and the `--source-64bit` flag:
 | --- | --- | --- |
 | Windows | *(default)* | `STAgent.msi` |
 | Windows | `--source-64bit` | `STAgent64.msi` |
-| macOS | | `STAgent.pkg` |
-| Linux | | `STAgent.run` |
+
 
 If the exact filename is found, it is used directly. If the directory
 contains a single file with a different name, it is automatically renamed.
@@ -177,6 +176,16 @@ When `--reboottime` triggers a reboot, the tool saves monitor state to
 `data/monitor_state.json` and creates a scheduled task to run
 `python main.py continue` 30 seconds after logon. The `continue` command
 resumes monitoring, prints the final timing report, and cleans up.
+
+#### Upgrade with extra action
+These actions can be take during reboot:
+
+| # | Event |
+|---|-------|
+| 2 | kill stAgentMon |
+| 3 | kill stAgentMon and MsiExec |
+| 4 | kill stAgentMon, stAgent and MsiExec |
+
 
 #### Resume after reboot
 

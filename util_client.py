@@ -74,6 +74,7 @@ class ExeValidationResult:
     processes_running: list[str] = field(default_factory=list)
     processes_not_running: list[str] = field(default_factory=list)
     stwatchdog_running: Optional[bool] = None   # None = not in watchdog mode
+    watchdog_duplicate: Optional[str] = None   # Non-None = validation issue
 
 
 @dataclass
@@ -470,6 +471,48 @@ class LocalClient:
             return False
 
     @staticmethod
+    def get_process_instances(
+        image_name: str,
+    ) -> list[tuple[int, str]]:
+        """
+        Return ``(PID, CommandLine)`` for every running instance of
+        *image_name* using PowerShell ``Get-CimInstance``.
+
+        :param image_name: Executable name (e.g. ``stAgentSvcMon.exe``).
+        :return: List of (pid, cmdline) tuples, empty on failure.
+        """
+        import csv
+        import io
+
+        try:
+            ps_cmd = (
+                f"Get-CimInstance Win32_Process "
+                f"-Filter \"Name='{image_name}'\" "
+                f"| Select-Object ProcessId,CommandLine "
+                f"| ConvertTo-Csv -NoTypeInformation"
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return []
+            entries: list[tuple[int, str]] = []
+            lines = result.stdout.strip().splitlines()
+            for row in csv.reader(lines[1:]):
+                if len(row) >= 2 and row[0].strip().isdigit():
+                    pid = int(row[0].strip())
+                    cmdline = row[1].strip() if row[1] else ""
+                    entries.append((pid, cmdline))
+            return entries
+        except Exception as exc:
+            log.debug(
+                "get_process_instances(%s) failed: %s",
+                image_name, exc,
+            )
+            return []
+
+    @staticmethod
     def wait_for_service(
         service_name: str = "stAgentSvc",
         timeout: int = 60,
@@ -797,6 +840,7 @@ class LocalClient:
 
         # Check stwatchdog service when in watchdog mode
         stwatchdog_running: Optional[bool] = None
+        watchdog_duplicate: Optional[str] = None
         if watchdog:
             stwatchdog_running = LocalClient.is_service_running("stwatchdog")
             if stwatchdog_running:
@@ -804,7 +848,42 @@ class LocalClient:
             else:
                 log.warning("stwatchdog service is NOT running")
 
-        valid = len(missing) == 0 and len(version_mismatches) == 0
+            # In watchdog mode there must be exactly one
+            # stAgentSvcMon.exe running with the "-watchdog" arg.
+            mon_instances = LocalClient.get_process_instances(
+                WATCHDOG_EXECUTABLE,
+            )
+            if len(mon_instances) == 0:
+                watchdog_duplicate = (
+                    f"no {WATCHDOG_EXECUTABLE} process found"
+                )
+                log.warning(watchdog_duplicate)
+            elif len(mon_instances) > 1:
+                pids = [str(pid) for pid, _ in mon_instances]
+                watchdog_duplicate = (
+                    f"multiple {WATCHDOG_EXECUTABLE} instances "
+                    f"running (PIDs: {', '.join(pids)})"
+                )
+                log.warning(watchdog_duplicate)
+            else:
+                pid, cmdline = mon_instances[0]
+                if "-watchdog" not in cmdline.lower():
+                    watchdog_duplicate = (
+                        f"{WATCHDOG_EXECUTABLE} (PID {pid}) not "
+                        f"running as -watchdog: {cmdline}"
+                    )
+                    log.warning(watchdog_duplicate)
+                else:
+                    log.info(
+                        "%s running as -watchdog (PID %d)",
+                        WATCHDOG_EXECUTABLE, pid,
+                    )
+
+        valid = (
+            len(missing) == 0
+            and len(version_mismatches) == 0
+            and watchdog_duplicate is None
+        )
         if valid:
             log.info(
                 "All executables verified in %s (watchdog_mode=%s)",
@@ -821,6 +900,7 @@ class LocalClient:
             processes_running=processes_running,
             processes_not_running=processes_not_running,
             stwatchdog_running=stwatchdog_running,
+            watchdog_duplicate=watchdog_duplicate,
         )
 
     @staticmethod
@@ -923,6 +1003,48 @@ class LocalClient:
             display_version="",
             install_location="",
         )
+
+    # ── Upgrade-In-Progress Registry Check ─────────────────────────────
+
+    UPGRADE_IN_PROGRESS_KEY = r"SOFTWARE\Netskope\UpgradeInProgress"
+
+    @staticmethod
+    def check_upgrade_in_progress() -> bool:
+        """
+        Check whether ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``
+        exists in the registry.
+
+        This key is created by the installer at the start of an upgrade
+        and removed when the upgrade finishes.  Immediately after a
+        reboot the key should still be present if the service executable
+        has not yet been replaced.
+
+        :return: True if the registry key exists.
+        """
+        import winreg
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                LocalClient.UPGRADE_IN_PROGRESS_KEY,
+            ):
+                log.info(
+                    "Registry key found: HKLM\\%s",
+                    LocalClient.UPGRADE_IN_PROGRESS_KEY,
+                )
+                return True
+        except FileNotFoundError:
+            log.info(
+                "Registry key NOT found: HKLM\\%s",
+                LocalClient.UPGRADE_IN_PROGRESS_KEY,
+            )
+            return False
+        except OSError as exc:
+            log.warning(
+                "Error reading registry key HKLM\\%s: %s",
+                LocalClient.UPGRADE_IN_PROGRESS_KEY, exc,
+            )
+            return False
 
     # ── Crash Dump Detection & Log Bundle ──────────────────────────────
 

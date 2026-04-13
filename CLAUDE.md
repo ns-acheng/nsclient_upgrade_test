@@ -85,10 +85,14 @@ log/                 # Log output
 - **Mock all I/O**: file system, network, and OS calls
 - **No admin privileges** required to run tests
 - Run: `python -m pytest test/ -v`
-- **Never write or update tests alongside code changes.** When code changes
-  create UT gaps, add a plan entry to `test/ut_backlog.md` instead. UT
-  updates are batched and done separately only after the user confirms the
-  code works.
+
+> ⚠️ **GOLDEN RULE — NO TEST ACTIVITY WITHOUT EXPLICIT INSTRUCTION**
+> Never run, write, or update tests unless the user explicitly asks.
+> This means: no `pytest`, no editing `test/` files, no creating new test
+> files — under any circumstances, even for regression checks.
+> Instead, when code changes create UT gaps, update `test/ut_backlog.md`
+> with what needs to be covered. UT work is batched and done separately
+> only after the user confirms the code works.
 
 ## Error Handling
 
