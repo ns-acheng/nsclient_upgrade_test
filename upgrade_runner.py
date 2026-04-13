@@ -8,6 +8,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -120,6 +121,7 @@ class UpgradeRunner:
         self._batch_mode = batch_mode
         self._original_argv: list[str] = original_argv or []
         self._watchdog_mode: bool = False
+        self._auto_update_already_enabled: bool = False
 
         # Composed helpers
         self._installer = InstallerManager(
@@ -196,12 +198,20 @@ class UpgradeRunner:
             # Create scenario log folder now that versions are known
             self._create_log_dir(version_before, expected)
 
-            # Trigger upgrade via WebUI
-            self._check_stopped()
-            self.webui.enable_upgrade_latest(
-                search_config=self.config_name,
-                target_64_bit=self.target_64_bit,
-            )
+            # Trigger upgrade via WebUI — skip if tenant already
+            # had auto-update enabled (race: upgrade may already
+            # be in progress)
+            if self._auto_update_already_enabled:
+                log.info(
+                    "allowAutoUpdate already enabled on tenant — "
+                    "skipping WebUI config, going straight to monitor"
+                )
+            else:
+                self._check_stopped()
+                self.webui.enable_upgrade_latest(
+                    search_config=self.config_name,
+                    target_64_bit=self.target_64_bit,
+                )
             self._upgrade_enabled = True
 
             # Start monitor before sync loop so it can detect
@@ -211,7 +221,8 @@ class UpgradeRunner:
                 expected_version=expected,
                 scenario=scenario,
             )
-            self._start_sync_thread(monitor)
+            if not self._auto_update_already_enabled:
+                self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -230,6 +241,9 @@ class UpgradeRunner:
 
             # Stop monitor and print timing report
             self._stop_monitor(monitor)
+
+            # Wait for posture to settle after timing 12
+            self._wait_posture_settle(monitor)
 
             # Post-upgrade checks
             service_running = self._verifier.verify_service_running()
@@ -381,13 +395,21 @@ class UpgradeRunner:
             # Create scenario log folder now that versions are known
             self._create_log_dir(version_before, expected)
 
-            # Trigger golden upgrade via WebUI
-            self._check_stopped()
-            self.webui.enable_upgrade_golden(
-                golden_version, dot=dot,
-                search_config=self.config_name,
-                target_64_bit=self.target_64_bit,
-            )
+            # Trigger golden upgrade via WebUI — skip if tenant already
+            # had auto-update enabled (race: upgrade may already
+            # be in progress)
+            if self._auto_update_already_enabled:
+                log.info(
+                    "allowAutoUpdate already enabled on tenant — "
+                    "skipping WebUI config, going straight to monitor"
+                )
+            else:
+                self._check_stopped()
+                self.webui.enable_upgrade_golden(
+                    golden_version, dot=dot,
+                    search_config=self.config_name,
+                    target_64_bit=self.target_64_bit,
+                )
             self._upgrade_enabled = True
 
             # Start monitor before sync loop so it can detect
@@ -397,7 +419,8 @@ class UpgradeRunner:
                 expected_version=expected,
                 scenario=scenario,
             )
-            self._start_sync_thread(monitor)
+            if not self._auto_update_already_enabled:
+                self._start_sync_thread(monitor)
             completed = monitor.wait_for_upgrade_complete(
                 timeout=self.cfg.max_wait_seconds,
             )
@@ -416,6 +439,9 @@ class UpgradeRunner:
 
             # Stop monitor and print timing report
             self._stop_monitor(monitor)
+
+            # Wait for posture to settle after timing 12
+            self._wait_posture_settle(monitor)
 
             # Post-upgrade checks
             service_running = self._verifier.verify_service_running()
@@ -652,6 +678,7 @@ class UpgradeRunner:
             scenario=scenario,
             source_64_bit=self.source_64_bit,
             original_argv=self._original_argv,
+            watchdog_mode=self._watchdog_mode,
         )
         monitor.start()
 
@@ -672,6 +699,34 @@ class UpgradeRunner:
         monitor.print_report()
 
     # ── Shared Helpers ───────────────────────────────────────────────
+
+    # Minimum seconds after timing 12 (service running with new PID)
+    # before running post-upgrade posture validation. Gives the client
+    # time to finish driver installation, register in the uninstall
+    # registry, and let stAgentSvcMon settle.
+    POSTURE_SETTLE_SECONDS = 30
+
+    def _wait_posture_settle(self, monitor: Any) -> None:
+        """
+        Wait until at least :attr:`POSTURE_SETTLE_SECONDS` have elapsed
+        since timing 12 was detected, then proceed with posture validation.
+
+        If timing 12 was not detected (e.g. timeout), this is a no-op.
+        """
+        t12_offset = monitor.state.timings.get("12")
+        if t12_offset is None:
+            return
+        monitor_start = datetime.fromisoformat(
+            monitor.state.monitor_start_time
+        ).timestamp()
+        t12_abs = monitor_start + t12_offset
+        remaining = self.POSTURE_SETTLE_SECONDS - (time.time() - t12_abs)
+        if remaining > 0:
+            log.info(
+                "Waiting %.0fs for posture to settle after timing 12",
+                remaining,
+            )
+            time.sleep(remaining)
 
     def _check_stopped(self) -> None:
         """Raise if the stop event (ESC key) has been set."""
@@ -730,10 +785,15 @@ class UpgradeRunner:
         Launch a background thread that runs ``nsdiag -u`` up to 3 times,
         with a 30-second gap between attempts.
 
-        The thread stops early as soon as any timing event fires so the
-        syncs don't continue once the upgrade is already in progress.
-        The main thread returns immediately and proceeds to
-        ``wait_for_upgrade_complete``.
+        After each sync, re-reads nsconfig.json for config_name,
+        watchdog_mode, and allowAutoUpdate.  If allowAutoUpdate is
+        already true the tenant config is live — stop syncing and
+        let the monitor capture the upgrade in progress.
+
+        The thread also stops early when any timing event fires so
+        the syncs don't continue once the upgrade is already in
+        progress.  The main thread returns immediately and proceeds
+        to ``wait_for_upgrade_complete``.
 
         :param monitor: Running TimingMonitor instance.
         """
@@ -756,6 +816,32 @@ class UpgradeRunner:
                     "Config sync attempt %d/%d complete",
                     attempt, MAX_SYNC_ATTEMPTS,
                 )
+
+                # Re-read nsconfig after each sync for fresh values
+                ns_info = self.client.detect_tenant_from_nsconfig()
+                if ns_info:
+                    if ns_info.config_name and not self.config_name:
+                        self.config_name = ns_info.config_name
+                        log.info(
+                            "Sync thread detected config_name: %s",
+                            self.config_name,
+                        )
+                    wdog = LocalClient.is_watchdog_mode()
+                    if wdog != self._watchdog_mode:
+                        self._watchdog_mode = wdog
+                        log.info(
+                            "Sync thread updated watchdog_mode: %s",
+                            self._watchdog_mode,
+                        )
+                    if ns_info.allow_auto_update:
+                        log.info(
+                            "Sync thread: allowAutoUpdate=true after "
+                            "attempt %d — stop syncing, monitor will "
+                            "capture upgrade",
+                            attempt,
+                        )
+                        return
+
                 if attempt < MAX_SYNC_ATTEMPTS:
                     # Wait between attempts; abort early if any timing fires
                     for _ in range(SYNC_INTERVAL):
@@ -788,6 +874,16 @@ class UpgradeRunner:
         After a fresh install, nsconfig.json may not yet have the
         ``configurationName``.  Running ``nsdiag -u`` forces a pull,
         then we re-read nsconfig.json to pick up the correct name.
+
+        Reads three values together after sync:
+        - ``config_name`` (clientConfig.configurationName)
+        - ``watchdog_mode`` (clientConfig.nsclient_watchdog_monitor)
+        - ``allow_auto_update`` (clientConfig.clientUpdate.allowAutoUpdate)
+
+        If the tenant already has auto-update enabled, sets
+        ``_auto_update_already_enabled`` so callers can skip
+        redundant WebUI config calls.
+
         Skips entirely when config_name is already set.
         """
         if self.config_name:
@@ -811,6 +907,14 @@ class UpgradeRunner:
         self._watchdog_mode = LocalClient.is_watchdog_mode()
         log.info("Watchdog mode: %s", self._watchdog_mode)
 
+        self._auto_update_already_enabled = (
+            ns_info.allow_auto_update if ns_info else False
+        )
+        log.info(
+            "allowAutoUpdate already enabled: %s",
+            self._auto_update_already_enabled,
+        )
+
     # ── Timing applicability ─────────────────────────────────────────
 
     def _skip_if_timing_not_applicable(
@@ -823,9 +927,14 @@ class UpgradeRunner:
         Timing 3 (stAgentSvcMon.exe -monitor starts) never fires in watchdog
         mode — the monitor process lifecycle is managed differently.
         """
-        if self.reboot_time == 3 and self._watchdog_mode:
+        if self.reboot_time in (3, 13) and self._watchdog_mode:
+            label = (
+                "stAgentSvcMon.exe -monitor"
+                if self.reboot_time == 3
+                else "stAgentSvcMon.exe stopped & upgraded"
+            )
             msg = (
-                "Skipped: reboottime 3 (stAgentSvcMon.exe -monitor) "
+                f"Skipped: reboottime {self.reboot_time} ({label}) "
                 "never fires in watchdog mode"
             )
             log.info(msg)

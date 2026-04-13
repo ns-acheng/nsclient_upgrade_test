@@ -92,6 +92,7 @@ class NsConfigInfo:
     """Information extracted from a local NSClient nsconfig.json."""
     tenant_hostname: str
     config_name: str
+    allow_auto_update: bool = False
 
 
 class LocalClient:
@@ -140,12 +141,19 @@ class LocalClient:
                 if gateway_host.startswith("gateway-")
                 else gateway_host
             )
-            config_name: str = (
-                config.get("clientConfig", {}).get("configurationName", "")
+            client_config = config.get("clientConfig", {})
+            config_name: str = client_config.get("configurationName", "")
+            allow_auto_update = (
+                str(
+                    client_config
+                    .get("clientUpdate", {})
+                    .get("allowAutoUpdate", "")
+                ).lower() == "true"
             )
             return NsConfigInfo(
                 tenant_hostname=hostname,
                 config_name=config_name,
+                allow_auto_update=allow_auto_update,
             )
         except Exception as exc:
             log.warning("Failed to read nsconfig.json: %s", exc)
@@ -164,9 +172,15 @@ class LocalClient:
         Running ``nsdiag.exe -u`` forces the client to pull the
         latest config from the tenant.
 
+        Wait logic adapts to how long nsdiag itself took:
+        - If nsdiag took > 10s the sync likely completed during
+          the command — no extra wait.
+        - If nsdiag took <= 10s, wait an additional 5s for
+          nsconfig.json to be written.
+
         :param is_64_bit: Use 64-bit nsdiag path.
-        :param wait_seconds: Seconds to wait after sync for config
-                             to be written to nsconfig.json.
+        :param wait_seconds: Legacy parameter (kept for
+                             signature compatibility, no longer used).
         """
         nsdiag = (
             LocalClient.NSDIAG_PATH_64 if is_64_bit
@@ -177,6 +191,7 @@ class LocalClient:
             return
 
         log.info("Syncing config from tenant: %s -u", nsdiag)
+        cmd_start = time.time()
         try:
             result = subprocess.run(
                 [str(nsdiag), "-u"],
@@ -191,11 +206,21 @@ class LocalClient:
             log.warning("nsdiag -u failed: %s", exc)
             return
 
-        log.info(
-            "Waiting %ds for config sync to complete...",
-            int(wait_seconds),
-        )
-        time.sleep(wait_seconds)
+        cmd_elapsed = time.time() - cmd_start
+        log.info("nsdiag -u completed in %.1fs", cmd_elapsed)
+
+        if cmd_elapsed > 10:
+            log.info(
+                "nsdiag took >10s — skipping additional wait"
+            )
+        else:
+            extra_wait = 5
+            log.info(
+                "nsdiag took <=10s — waiting %ds for config write...",
+                extra_wait,
+            )
+            time.sleep(extra_wait)
+
         log.info("Config sync wait completed")
 
     @property

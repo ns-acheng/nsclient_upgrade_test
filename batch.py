@@ -20,6 +20,7 @@ import logging
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -42,7 +43,7 @@ from util_batch import (
     save_record,
 )
 from util_input import start_input_monitor
-from util_log import setup_logging
+from util_log import setup_batch_logging, setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +153,21 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
 
         run_test_subprocess(record.base_args, test, result_file, stop_event)
         save_record(record, record_path)
+
+        # If the test is still "running", the monitor triggered a
+        # reboot and the subprocess was killed by Windows shutdown.
+        # The batch continue task is already registered; just save the
+        # record and wait for the reboot to kill this process.
+        if test.status == "running":
+            log.info(
+                "Reboot pending for [%s] — waiting for shutdown.",
+                test.id,
+            )
+            print(f"\n  Reboot triggered for {test.id} — waiting for shutdown...")
+            time.sleep(120)
+            # Should not reach here — OS kills the process.
+            return 1
+
         _print_test_result(test)
 
         # Critical post-upgrade validation failure — stop immediately.
@@ -494,6 +510,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     setup_logging(verbose=args.verbose, file_logging=False)
+    setup_batch_logging()
 
     if args.report:
         return cmd_report(args)

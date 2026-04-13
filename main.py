@@ -178,8 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resume timing monitor after reboot (auto-called by scheduled task)",
     )
     continue_parser.add_argument(
-        "--timeout", type=int, default=600,
-        help="Max seconds to wait for remaining timings (default: 600)",
+        "--timeout", type=int, default=180,
+        help="Max seconds to wait for upgrade after reboot (default: 180)",
     )
     continue_parser.add_argument(
         "--result-file", dest="result_file", default=None,
@@ -446,6 +446,27 @@ def cmd_continue(args: argparse.Namespace) -> int:
         _try_record_manual_result(result, log_dir, state.original_argv)
 
     return 0 if result.success else 1
+
+
+POSTURE_SETTLE_SECONDS = 30
+
+
+def _wait_posture_settle(monitor: "TimingMonitor") -> None:
+    """Wait until 30s after timing 12, then proceed with posture validation."""
+    t12_offset = monitor.state.timings.get("12")
+    if t12_offset is None:
+        return
+    monitor_start = datetime.fromisoformat(
+        monitor.state.monitor_start_time
+    ).timestamp()
+    t12_abs = monitor_start + t12_offset
+    remaining = POSTURE_SETTLE_SECONDS - (time.time() - t12_abs)
+    if remaining > 0:
+        log.info(
+            "Waiting %.0fs for posture to settle after timing 12",
+            remaining,
+        )
+        time.sleep(remaining)
 
 
 def _run_post_reboot_validation(

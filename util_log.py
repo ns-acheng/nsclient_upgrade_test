@@ -154,6 +154,38 @@ def setup_folder_logging(
     return log_file
 
 
+def setup_batch_logging(
+    log_file: Optional[Path] = None,
+) -> Path:
+    """
+    Add an appending file handler for batch orchestration logging.
+
+    The log file persists across reboots so the full batch timeline
+    (including post-reboot continuation) is captured in one place.
+
+    Call after :func:`setup_logging` to add the file handler alongside
+    the console handler.
+
+    :param log_file: Path to the batch log file.  Defaults to
+                     ``log/batch.log``.
+    :return: Path to the log file.
+    """
+    if log_file is None:
+        log_file = LOG_DIR / "batch.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    root_logger = logging.getLogger()
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+    root_logger.addHandler(file_handler)
+
+    logging.getLogger("nsclient_upgrade").info(
+        "Batch file logging started — %s", log_file,
+    )
+    return log_file
+
+
 def rename_log_dir(old_dir: Path, new_dir: Path) -> Path:
     """
     Rename a scenario log folder and update the file handler.
