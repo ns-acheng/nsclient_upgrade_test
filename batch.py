@@ -3,14 +3,16 @@ Batch runner for Netskope Client auto-upgrade tests.
 
 Usage:
     python batch.py                  Run all pending tests from data/batch.json
+    python batch.py --local          Run local profile (data/batch_local.json)
     python batch.py --resume         Resume an existing batch run
     python batch.py --continue       Resume after reboot (called by scheduled task)
     python batch.py --report         Re-generate HTML report from existing record
+    python batch.py --merge record1.json record2.json
+    python batch.py --merge --local record1.json record2.json
     python batch.py --fresh          Discard record and start fresh
 
 Options:
-    --batch  PATH    Batch definition JSON  (default: data/batch.json)
-    --record PATH    Batch record JSON      (default: log/batch_record.json)
+    --local          Use local profile paths
     --retry-unknown  Reset failed tests with empty/unknown/N/A version_before to pending
     -v               Verbose logging
 """
@@ -55,6 +57,19 @@ _RESET = "\033[0m"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
+
+
+def _selected_paths(local: bool) -> tuple[Path, Path]:
+    """Return (batch_path, record_path) based on --local profile."""
+    if local:
+        return BATCH_LOCAL_JSON, BATCH_RECORD_LOCAL_JSON
+    return BATCH_JSON, BATCH_RECORD_JSON
+
+
+def _report_path_for(record_path: Path) -> Path:
+    """Return report path matching the selected record file."""
+    report_name = record_path.stem.replace("batch_record", "batch_report") + ".html"
+    return record_path.parent / report_name
 
 
 def _result_file_for(record: BatchRecord, test: TestRun) -> Path:
@@ -108,8 +123,7 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
 
     :return: 0 if all tests passed, 1 if any failed or batch was stopped.
     """
-    report_name = record_path.stem.replace("batch_record", "batch_report") + ".html"
-    report_path = record_path.parent / report_name
+    report_path = _report_path_for(record_path)
     stop_event = threading.Event()
     start_input_monitor(stop_event)
 
@@ -212,8 +226,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     With ``--retry-failed`` or ``--retry ID``, load the existing record,
     reset the target tests to pending, and re-run.
     """
-    batch_path = Path(args.batch)
-    record_path = Path(args.record)
+    batch_path, record_path = _selected_paths(args.local)
 
     # ── Retry mode ────────────────────────────────────────────────────
     if args.retry_failed or args.retry or args.retry_unknown:
@@ -367,7 +380,7 @@ def cmd_continue(args: argparse.Namespace) -> int:
     5. Apply the result to the test record.
     6. Continue with remaining pending tests.
     """
-    record_path = Path(args.record)
+    _, record_path = _selected_paths(args.local)
     record = load_record(record_path)
     if record is None:
         print("Error: No batch record found. Nothing to continue.")
@@ -415,14 +428,117 @@ def cmd_continue(args: argparse.Namespace) -> int:
 
 def cmd_report(args: argparse.Namespace) -> int:
     """Re-generate the HTML report from an existing record."""
-    record_path = Path(args.record)
+    _, record_path = _selected_paths(args.local)
     record = load_record(record_path)
     if record is None:
         print("Error: No batch record found.")
         return 1
-    report_name = record_path.stem.replace("batch_record", "batch_report") + ".html"
-    report_path = record_path.parent / report_name
+    report_path = _report_path_for(record_path)
     out = generate_html_report(record, report_path)
+    print(f"Report generated: {out}")
+    return 0
+
+
+def _parse_iso_timestamp(value: str) -> datetime:
+    """Parse ISO timestamp safely; returns datetime.min on failure."""
+    if not value:
+        return datetime.min
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.min
+
+
+def _test_has_result_data(test: TestRun) -> bool:
+    """Return True if a test has non-empty result data to merge."""
+    return any([
+        test.status in ("pass", "fail", "running"),
+        bool(test.version_before),
+        bool(test.version_after),
+        bool(test.expected_version),
+        bool(test.message),
+        bool(test.started_at),
+        bool(test.finished_at),
+        bool(test.log_dir),
+        bool(test.elapsed_seconds),
+    ])
+
+
+def _test_latest_timestamp(test: TestRun) -> datetime:
+    """Return the newest known timestamp from a test result."""
+    return max(
+        _parse_iso_timestamp(test.finished_at),
+        _parse_iso_timestamp(test.started_at),
+    )
+
+
+def _copy_result_fields(dst: TestRun, src: TestRun) -> None:
+    """Copy result fields from src to dst, keeping id/extra_args unchanged."""
+    dst.status = src.status
+    dst.log_dir = src.log_dir
+    dst.version_before = src.version_before
+    dst.version_after = src.version_after
+    dst.expected_version = src.expected_version
+    dst.elapsed_seconds = src.elapsed_seconds
+    dst.message = src.message
+    dst.started_at = src.started_at
+    dst.finished_at = src.finished_at
+    dst.critical_failure = src.critical_failure
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    """
+    Merge result data from one or more record JSON files into current record.
+
+    If both records have data for the same test id, keep the newer one based on
+    finished_at/started_at timestamp.
+    """
+    if not args.merge_records:
+        print("Error: --merge requires at least one record JSON path.")
+        return 1
+
+    batch_path, record_path = _selected_paths(args.local)
+    report_path = _report_path_for(record_path)
+
+    target = load_record(record_path)
+    if target is None:
+        base_args, tests = load_batch_config(batch_path)
+        target = create_record(base_args, tests)
+
+    target_by_id = {t.id: t for t in target.tests}
+    merged = 0
+    skipped = 0
+
+    for src_path_raw in args.merge_records:
+        src_path = Path(src_path_raw)
+        src = load_record(src_path)
+        if src is None:
+            print(f"Warning: skipped invalid record file: {src_path}")
+            continue
+
+        for src_test in src.tests:
+            dst_test = target_by_id.get(src_test.id)
+            if dst_test is None:
+                skipped += 1
+                continue
+            if not _test_has_result_data(src_test):
+                continue
+
+            if not _test_has_result_data(dst_test):
+                _copy_result_fields(dst_test, src_test)
+                merged += 1
+                continue
+
+            if _test_latest_timestamp(src_test) > _test_latest_timestamp(dst_test):
+                _copy_result_fields(dst_test, src_test)
+                merged += 1
+
+    save_record(target, record_path)
+    out = generate_html_report(target, report_path)
+    print(
+        f"Merged {merged} test result(s) into {record_path}. "
+        f"Skipped {skipped} unknown test id(s)."
+    )
     print(f"Report generated: {out}")
     return 0
 
@@ -476,12 +592,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--batch", default=str(BATCH_JSON),
-        help="Batch definition JSON (default: data/batch.json)",
+        "--merge", action="store_true",
+        help=(
+            "Merge result data from record JSON files into current record "
+            "and regenerate HTML report"
+        ),
     )
     parser.add_argument(
-        "--record", default=str(BATCH_RECORD_JSON),
-        help="Batch record JSON (default: log/batch_record.json)",
+        "merge_records", nargs="*", metavar="RECORD_JSON",
+        help="Record JSON files used by --merge",
     )
     parser.add_argument(
         "--resume", action="store_true",
@@ -523,13 +642,12 @@ def main() -> int:
     setup_logging(verbose=args.verbose, file_logging=False)
     setup_batch_logging()
 
-    # --local overrides batch/record paths unless the user explicitly
-    # passed --batch or --record themselves.
-    if args.local:
-        if args.batch == str(BATCH_JSON):
-            args.batch = str(BATCH_LOCAL_JSON)
-        if args.record == str(BATCH_RECORD_JSON):
-            args.record = str(BATCH_RECORD_LOCAL_JSON)
+    if args.merge:
+        return cmd_merge(args)
+
+    if args.merge_records:
+        print("Error: positional record files are only valid with --merge")
+        return 1
 
     if args.report:
         return cmd_report(args)
@@ -538,7 +656,7 @@ def main() -> int:
         return cmd_continue(args)
 
     if args.fresh:
-        record_path = Path(args.record)
+        _, record_path = _selected_paths(args.local)
         if record_path.exists():
             record_path.unlink()
             print(f"Cleared {record_path}")

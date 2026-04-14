@@ -237,6 +237,12 @@ subprocess. Results are written to `log/batch_record.json` after every test
 so progress is never lost. An HTML report is regenerated after each test at
 `log/batch_report.html`.
 
+Use `--local` to switch to the local profile files:
+
+- `data/batch_local.json`
+- `log/batch_record_local.json`
+- `log/batch_report_local.html`
+
 For reboot tests, batch.py registers a Windows scheduled task
 (`NsClientBatchContinue`, ONLOGON) **before** launching the subprocess. After
 the machine reboots and the user auto-logs in, the task calls
@@ -270,9 +276,12 @@ combinations is included in `data/batch.json`.
 | Command | Description |
 |---------|-------------|
 | `python batch.py` | Fresh run — prompts if a record already exists (see below) |
+| `python batch.py --local` | Same flow, but uses local profile files |
 | `python batch.py --resume` | Resume from existing record, skip completed tests |
 | `python batch.py --retry-failed` | Reset all failed tests to pending and re-run |
 | `python batch.py --retry ID [ID ...]` | Reset specific test(s) by ID and re-run |
+| `python batch.py --merge record1.json record2.json` | Merge external records into current record and regenerate report |
+| `python batch.py --merge --local record1.json record2.json` | Merge into local profile record and regenerate local report |
 | `python batch.py --continue` | Resume after reboot (called automatically by scheduled task) |
 | `python batch.py --report` | Re-generate HTML report without running any tests |
 | `python batch.py --fresh` | Silently delete the existing record and start over |
@@ -281,9 +290,24 @@ combinations is included in `data/batch.json`.
 
 | Option | Description |
 |--------|-------------|
-| `--batch PATH` | Batch definition JSON (default: `data/batch.json`) |
-| `--record PATH` | Batch record JSON (default: `log/batch_record.json`) |
+| `--local` | Use local profile files (`data/batch_local.json`, `log/batch_record_local.json`, `log/batch_report_local.html`) |
 | `-v` | Verbose logging |
+
+### Merge behavior (`--merge`)
+
+`--merge` loads one or more existing batch record JSON files and merges test
+results into the currently selected record profile:
+
+- default profile: `log/batch_record.json`
+- local profile (`--local`): `log/batch_record_local.json`
+
+For each matching test ID:
+
+- if target test has no result yet and source has data, source is copied
+- if both have data, the newer result is kept (by timestamp)
+  - compares `finished_at` first, then `started_at`
+
+After merge, the corresponding HTML report is regenerated automatically.
 
 ### Re-running failed tests
 

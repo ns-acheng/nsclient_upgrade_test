@@ -53,3 +53,27 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 - For each test, patch helper methods (`_find_search_box`, `_extract_link_from_body`, `_dismiss_overlays`) at class or method level
 - Ensure WebDriverWait mock returns appropriate values for sequential `.until()` calls
 - Update error message expectation in `test_timeout_raises` from "Email not found" to "No unread email found within"
+
+## test_batch.py / test_util_batch.py — New batch profile + merge plan
+
+- **`--local` profile selection**: Verify `batch.py --local` uses `data/batch_local.json`, writes `log/batch_record_local.json`, and generates `log/batch_report_local.html`.
+- **default profile selection**: Verify no `--local` keeps using `data/batch.json`, `log/batch_record.json`, and `log/batch_report.html`.
+- **removed path flags enforcement**: Verify legacy `--batch` / `--record` are rejected by CLI parser.
+- **`--merge` requires inputs**: Verify `python batch.py --merge` without files returns error.
+- **merge positional guard**: Verify positional record files without `--merge` return error.
+- **merge creates target record if missing**: With no existing target record, verify merge initializes from selected batch config and then applies source results.
+- **merge by test id only**: Verify unknown IDs from source records are skipped (counted as skipped) and do not create new test entries.
+- **merge when target has no data**: Verify source result is copied into target when target test is empty/pending.
+- **merge conflict resolution by timestamp**: For same test id with data in both target and source, keep newer result by `finished_at` (fallback: `started_at`).
+- **merge ignores older source**: Verify older source record does not overwrite newer target result.
+- **merge multiple source files order-independence**: Verify final result is still newest-by-timestamp regardless of input file order.
+- **merge regenerates report**: Verify merge always writes corresponding HTML report path for selected profile.
+
+## test_util_installer.py — No-client cleanup hook plan
+
+- **no-client branch runs cleanup**: When uninstall entry is not found, verify `_run_cleanup_batch()` is invoked before install flow continues.
+- **installed branch skips cleanup hook**: When uninstall entry exists, verify uninstall path executes and cleanup hook is not called.
+- **cleanup script missing**: Verify `_run_cleanup_batch()` logs warning and returns without raising.
+- **cleanup non-zero exit is non-fatal**: Mock `subprocess.run` return code != 0 and verify warning is logged but install flow proceeds.
+- **cleanup exception is non-fatal**: Mock `subprocess.run` raising exception and verify warning is logged and install flow proceeds.
+- **cleanup command shape**: Verify execution uses `cmd.exe /c <repo>/tool/cleanup.bat`.
