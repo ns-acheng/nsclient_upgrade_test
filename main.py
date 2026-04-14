@@ -410,6 +410,7 @@ def cmd_status(cfg: ToolConfig) -> int:
 
 def cmd_continue(args: argparse.Namespace) -> int:
     """Resume timing monitor after reboot, then run post-upgrade validation."""
+    from util_client import CrashMonitor, LocalClient
     from util_monitor import (
         TimingMonitor, load_monitor_state, clear_monitor_state,
         delete_continue_task,
@@ -431,6 +432,14 @@ def cmd_continue(args: argparse.Namespace) -> int:
     # observability only and must not gate pass/fail or skip logic.
     _check_upgrade_in_progress(state)
 
+    # Start crash monitor immediately so any dump written during the
+    # post-reboot upgrade window is caught without polling delays.
+    # on_crash=monitor.stop ensures a detected crash immediately
+    # unblocks wait_for_upgrade_complete.  stop_event is wired in
+    # after TimingMonitor is created so both share the same exit path.
+    effective_64 = state.target_64_bit or state.source_64_bit
+    timing_stop_event = threading.Event()
+
     log.info("Resuming timing monitor from saved state")
     monitor = TimingMonitor(
         target_64_bit=state.target_64_bit,
@@ -438,11 +447,24 @@ def cmd_continue(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         state=state,
     )
+
+    crash_monitor = CrashMonitor(
+        is_64_bit=effective_64,
+        log_dir=log_dir or LOG_DIR,
+        stop_event=timing_stop_event,
+        on_crash=monitor.stop,
+    )
+    crash_monitor.start()
+
     monitor.start()
     completed = monitor.wait_for_upgrade_complete(
         timeout=args.timeout,
     )
+    timing_stop_event.set()  # stop crash monitor loop
     monitor.stop()
+    crash_monitor.stop()
+    if crash_monitor.crash_detected:
+        log.error("Post-reboot crash dump detected (logs already collected)")
     monitor.print_report()
 
     clear_monitor_state()

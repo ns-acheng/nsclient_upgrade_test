@@ -14,7 +14,6 @@ from util_client import (
     LocalClient, ExeValidationResult, UninstallEntryResult,
 )
 from util_config import UpgradeConfig
-from util_log import LOG_DIR
 from util_webui import WebUIClient
 
 log = logging.getLogger(__name__)
@@ -145,27 +144,6 @@ class UpgradeVerifier:
                 break
 
             elapsed = time.time() - start
-
-            # Check for crash dumps each cycle
-            crash_found, zero_count = LocalClient.check_crash_dumps()
-            if zero_count > 0:
-                log.info("Cleaned %d zero-byte dump files", zero_count)
-            if crash_found:
-                log.error(
-                    "Crash dump detected during upgrade polling!"
-                )
-                effective_64 = (
-                    self.target_64_bit or self.source_64_bit
-                )
-                log_dir = self.log_dir or LOG_DIR
-                LocalClient.handle_crash(effective_64, log_dir)
-                final = self.get_current_version()
-                return PollResult(
-                    changed=(final != initial_version),
-                    final_version=final,
-                    elapsed_seconds=elapsed,
-                    crash_detected=True,
-                )
 
             current = self.get_current_version()
 

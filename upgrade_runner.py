@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional
 from util_client import (
     LocalClient, SERVICES,
     ExeValidationResult, UninstallEntryResult, UninstallCriticalError,
-    check_driver_install_log,
+    check_driver_install_log, CrashMonitor,
 )
 from util_config import UpgradeConfig
 from util_installer import (
@@ -127,6 +127,7 @@ class UpgradeRunner:
         self._watchdog_mode: bool = False
         self._auto_update_already_enabled: bool = False
         self._simulate_upgrade: bool = simulate_upgrade
+        self._crash_monitor: Optional[CrashMonitor] = None
 
         # Composed helpers
         self._installer = InstallerManager(
@@ -232,15 +233,10 @@ class UpgradeRunner:
                 timeout=self.cfg.max_wait_seconds,
             )
 
-            # Check for crash dumps
-            crash_found, zero_count = LocalClient.check_crash_dumps()
-            if zero_count > 0:
-                log.info("Cleaned %d zero-byte dump files", zero_count)
-            if crash_found:
-                log.error("Crash dump detected during upgrade!")
-                effective_64 = self.target_64_bit or self.source_64_bit
-                log_dir = self._log_dir or LOG_DIR
-                LocalClient.handle_crash(effective_64, log_dir)
+            crash_found = (
+                self._crash_monitor.crash_detected
+                if self._crash_monitor is not None else False
+            )
 
             version_after = self._verifier.get_current_version()
 
@@ -430,15 +426,10 @@ class UpgradeRunner:
                 timeout=self.cfg.max_wait_seconds,
             )
 
-            # Check for crash dumps
-            crash_found, zero_count = LocalClient.check_crash_dumps()
-            if zero_count > 0:
-                log.info("Cleaned %d zero-byte dump files", zero_count)
-            if crash_found:
-                log.error("Crash dump detected during upgrade!")
-                effective_64 = self.target_64_bit or self.source_64_bit
-                log_dir = self._log_dir or LOG_DIR
-                LocalClient.handle_crash(effective_64, log_dir)
+            crash_found = (
+                self._crash_monitor.crash_detected
+                if self._crash_monitor is not None else False
+            )
 
             version_after = self._verifier.get_current_version()
 
@@ -563,6 +554,7 @@ class UpgradeRunner:
 
             # Create scenario log folder
             self._create_log_dir(version_before, "disabled")
+            self._start_crash_monitor()
 
             # Disable auto-upgrade and verify it stays
             self._check_stopped()
@@ -601,11 +593,15 @@ class UpgradeRunner:
                 version_after,
             )
 
+            crash_found = (
+                self._crash_monitor.crash_detected
+                if self._crash_monitor is not None else False
+            )
             elapsed = time.time() - start_time
             version_ok = version_before == version_after
             success = (
                 version_ok and service_running
-                and validation_ok and not poll.crash_detected
+                and validation_ok and not crash_found
             )
             message = (
                 f"Correctly stayed at {version_before} "
@@ -616,7 +612,7 @@ class UpgradeRunner:
                     f"{version_before} -> {version_after}"
                 )
             )
-            if poll.crash_detected:
+            if crash_found:
                 message += " — CRASH DUMP DETECTED"
             message += format_validation_issues(
                 service_running, exe_validation, uninstall_entry,
@@ -818,16 +814,10 @@ class UpgradeRunner:
                     f"Upgrade MSI install failed: {exc}"
                 ) from exc
 
-            # Check for crash dumps
-            crash_found, zero_count = LocalClient.check_crash_dumps()
-            if zero_count > 0:
-                log.info("Cleaned %d zero-byte dump files", zero_count)
-            if crash_found:
-                log.error("Crash dump detected during local upgrade!")
-                effective_64 = self.target_64_bit or self.source_64_bit
-                LocalClient.handle_crash(
-                    effective_64, self._log_dir or LOG_DIR,
-                )
+            crash_found = (
+                self._crash_monitor.crash_detected
+                if self._crash_monitor is not None else False
+            )
 
             version_after = self._verifier.get_current_version()
 
@@ -946,6 +936,7 @@ class UpgradeRunner:
             standby=self.standby,
         )
         monitor.start()
+        self._start_crash_monitor(monitor=monitor)
 
         def _esc_bridge() -> None:
             self.stop_event.wait()
@@ -955,6 +946,25 @@ class UpgradeRunner:
         bridge.start()
 
         return monitor
+
+    def _start_crash_monitor(self, monitor: Optional[Any] = None) -> None:
+        """Create and start the background crash dump monitor.
+
+        :param monitor: Running TimingMonitor, if any.  Its :meth:`stop`
+                        is used as the abort callback so a detected crash
+                        immediately unblocks ``wait_for_upgrade_complete``.
+        """
+        if self._crash_monitor is not None:
+            return  # already running
+        effective_64 = self.target_64_bit or self.source_64_bit
+        on_crash = monitor.stop if monitor is not None else None
+        self._crash_monitor = CrashMonitor(
+            is_64_bit=effective_64,
+            log_dir=self._log_dir or LOG_DIR,
+            stop_event=self.stop_event,
+            on_crash=on_crash,
+        )
+        self._crash_monitor.start()
 
     def _stop_monitor(self, monitor: Optional[Any]) -> None:
         """Stop timing monitor and print report."""
@@ -1281,6 +1291,9 @@ class UpgradeRunner:
 
     def _cleanup(self) -> None:
         """Reset tenant config, close browser, remove cloned installer."""
+        if self._crash_monitor is not None:
+            self._crash_monitor.stop()
+            self._crash_monitor = None
         self._installer.cleanup()
         if self._upgrade_enabled:
             try:

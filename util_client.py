@@ -13,6 +13,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1466,6 +1467,126 @@ class LocalClient:
                             log.error("Failed to copy dump %s: %s", f, exc)
         except Exception as exc:
             log.error("Error during crash handling: %s", exc)
+
+
+# ── Crash dump monitor ─────────────────────────────────────────────────
+
+CRASH_MONITOR_INTERVAL = 2.0  # seconds between crash dump polls
+
+
+class CrashMonitor:
+    """
+    Background daemon thread that polls for crash dump files every
+    ``CRASH_MONITOR_INTERVAL`` seconds throughout the upgrade lifecycle.
+
+    Start it before the upgrade begins so any dump written during install,
+    post-reboot continuation, or idle wait is caught immediately.  The
+    first time a non-empty dump is found :meth:`LocalClient.handle_crash`
+    is called to collect the log bundle, Windows Event Logs, and copy the
+    dump into *log_dir*.  After collection the optional *on_crash* callback
+    is invoked so the caller can abort the active timing monitor or
+    version-poll loop.
+
+    The thread exits when:
+    - :meth:`stop` is called (internal stop event), OR
+    - the *stop_event* passed by the caller is set (ESC key interrupt)
+
+    Usage::
+
+        cm = CrashMonitor(
+            is_64_bit=True,
+            log_dir=Path("log/run1"),
+            stop_event=esc_event,
+            on_crash=monitor.stop,
+        )
+        cm.start()
+        # ... upgrade runs ...
+        cm.stop()
+        if cm.crash_detected:
+            ...
+    """
+
+    def __init__(
+        self,
+        is_64_bit: bool,
+        log_dir: Path,
+        stop_event: Optional[threading.Event] = None,
+        on_crash: Optional[callable] = None,
+    ) -> None:
+        self._is_64_bit = is_64_bit
+        self._log_dir = log_dir
+        self._ext_stop_event = stop_event
+        self._on_crash = on_crash
+        self._crash_detected = False
+        self._zero_count = 0
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        """Start the background polling thread."""
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="crash-monitor",
+        )
+        self._thread.start()
+        log.info(
+            "Crash monitor started (interval=%.0fs)",
+            CRASH_MONITOR_INTERVAL,
+        )
+
+    def stop(self) -> None:
+        """Signal the thread to stop and wait for it."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        log.info("Crash monitor stopped")
+
+    @property
+    def crash_detected(self) -> bool:
+        """True if at least one non-empty crash dump was found."""
+        with self._lock:
+            return self._crash_detected
+
+    def _run(self) -> None:
+        """Polling loop — runs as daemon thread."""
+        while not self._stop_event.wait(timeout=CRASH_MONITOR_INTERVAL):
+            # Also stop when the external stop event (ESC key) fires
+            if self._ext_stop_event is not None and self._ext_stop_event.is_set():
+                log.info("Crash monitor: external stop event set — exiting")
+                break
+            try:
+                found, zero_count = LocalClient.check_crash_dumps()
+                if zero_count > 0:
+                    with self._lock:
+                        self._zero_count += zero_count
+                    log.info(
+                        "Crash monitor: cleaned %d zero-byte dump file(s)",
+                        zero_count,
+                    )
+                if found:
+                    with self._lock:
+                        already = self._crash_detected
+                        self._crash_detected = True
+                    if not already:
+                        log.error("Crash monitor: crash dump detected — collecting logs")
+                        try:
+                            LocalClient.handle_crash(
+                                self._is_64_bit, self._log_dir,
+                            )
+                        except Exception as exc:
+                            log.error(
+                                "Crash monitor: handle_crash failed: %s", exc,
+                            )
+                        if self._on_crash is not None:
+                            try:
+                                log.info("Crash monitor: invoking abort callback")
+                                self._on_crash()
+                            except Exception as exc:
+                                log.debug(
+                                    "Crash monitor: on_crash callback failed: %s", exc,
+                                )
+            except Exception as exc:
+                log.debug("Crash monitor: check failed: %s", exc)
 
 
 # ── Installation log helpers ────────────────────────────────────────────
