@@ -565,7 +565,7 @@ class GmailBrowser:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
                         f"No unread email found within "
-                        f"{timeout}s: {subject}"
+                        f"{timeout}s: {SEARCH_SUBJECT}"
                     )
                 log.info(
                     "No unread email yet — retrying in %ds",

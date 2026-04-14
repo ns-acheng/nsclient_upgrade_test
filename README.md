@@ -140,34 +140,35 @@ python main.py upgrade --target golden-dot
 
 #### Upgrade with timing monitor
 
-Monitor 13 upgrade lifecycle events in a background thread while the
+Monitor 14 upgrade lifecycle events in a background thread while the
 upgrade runs. Optionally trigger a reboot at a specific timing:
 
 ```bash
 # Monitor only (no reboot) -- timing report prints after upgrade completes
 python main.py upgrade --target latest --source-64bit --target-64bit --reboottime 5 --rebootdelay 0
 
-# Reboot when timing 5 fires (stAgentUI.exe is gone), delay 5s
-python main.py upgrade --target latest --source-64bit --reboottime 5 --rebootdelay 5
+# Reboot when timing 6 fires (stAgentUI.exe is gone), delay 5s
+python main.py upgrade --target latest --source-64bit --reboottime 6 --rebootdelay 5
 ```
 
-The 13 monitored timings:
+The 14 monitored timings:
 
 | # | Event |
 |---|-------|
 | 1 | nsconfig.json clientUpdate.allowAutoUpdate = true |
 | 2 | STAgent.msi downloaded (>25 MB) |
 | 3 | stAgentSvcMon.exe -monitor starts |
-| 4 | nsInstallation.log created/updated |
-| 5 | stAgentUI.exe is gone |
-| 6 | stAgentSvc service stopped/stop_pending |
-| 7 | stAgentSvc.exe process gone |
-| 8 | stadrv service stopped/gone |
-| 9 | stAgentSvc service stopped (after process exit) |
-| 10 | stAgentSvc service removed from SCM |
-| 11 | New stAgentSvc.exe in target install dir |
-| 12 | stAgentSvc.exe running with new PID |
-| 13 | stAgentSvcMon.exe stopped & upgraded |
+| 4 | MSIExec process start with argument /i or /I |
+| 5 | nsInstallation.log created/updated |
+| 6 | stAgentUI.exe is gone |
+| 7 | stAgentSvc service stopped/stop_pending |
+| 8 | stAgentSvc.exe process gone |
+| 9 | stadrv service stopped/gone |
+| 10 | stAgentSvc service stopped (after process exit) |
+| 11 | stAgentSvc service removed from SCM |
+| 12 | New stAgentSvc.exe in target install dir |
+| 13 | stAgentSvc.exe running with new PID |
+| 14 | stAgentSvcMon.exe stopped & upgraded |
 
 > **Note:** Timing 3 never fires in watchdog mode — the tool detects this
 > and automatically skips `--reboottime 3` tests with a PASS result.

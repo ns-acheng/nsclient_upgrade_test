@@ -36,3 +36,20 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 - **`wait_for_upgrade_complete` timing-1 fast-path skipped for standby**: Set `reboot_time=1`, `standby="s1"`; verify `_trigger_reboot` is NOT called from `wait_for_upgrade_complete` (fast-path guarded by `not self._state.standby`).
 - **`MonitorState` serialisation round-trip with standby**: Create a state with `standby="s0"`, serialise with `asdict`, reconstruct with `MonitorState(**data)`; verify `standby == "s0"` and `standby_triggered == False`.
 - **`STANDBY_WAKE_SECONDS` passed to API**: Verify the power API is called with `STANDBY_WAKE_SECONDS` (currently 30).
+- **`STANDBY_WAKE_SECONDS` passed to API**: Verify the power API is called with `STANDBY_WAKE_SECONDS` (currently 30).
+
+## test_util_email.py — Browser Automation Testing Mocks
+
+**Issue**: Email browser tests (`test_get_download_link_success`, `test_unwraps_google_redirect_in_link`, `test_retries_on_no_results`, `test_timeout_raises`) attempt to mock Selenium WebDriver but the mocking is incomplete. The actual `get_download_link()` method code executes with partial mocks, leading to test failures.
+
+**Root Cause**: `WebDriverWait(driver, 15)` instances are created fresh inside the method, but test mocks don't properly configure:
+- `driver.get()`, `driver.current_url` property
+- `driver.execute_script()` return value
+- `EC.presence_of_element_located()` and related expected conditions
+- Helper method returns (`_find_search_box()`, `_extract_link_from_body()`)
+
+**Fix Required** (dedicated browser testing pass):
+- Mock all `driver` method calls comprehensively in test setup
+- For each test, patch helper methods (`_find_search_box`, `_extract_link_from_body`, `_dismiss_overlays`) at class or method level
+- Ensure WebDriverWait mock returns appropriate values for sequential `.until()` calls
+- Update error message expectation in `test_timeout_raises` from "Email not found" to "No unread email found within"

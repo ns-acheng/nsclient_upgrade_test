@@ -908,6 +908,7 @@ class LocalClient:
             len(missing) == 0
             and len(version_mismatches) == 0
             and watchdog_duplicate is None
+            and (not watchdog or stwatchdog_running is True)
         )
         if valid:
             log.info(

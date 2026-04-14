@@ -104,6 +104,9 @@ def no_real_io() -> Any:
     mock_monitor = MagicMock()
     mock_monitor.wait_for_upgrade_complete.return_value = True
     mock_monitor.wait_for_completion.return_value = True
+    mock_state = MagicMock()
+    mock_state.monitor_start_time = "2023-01-01T00:00:00"
+    mock_monitor.state = mock_state
     with patch("upgrade_runner.LocalClient.check_crash_dumps", return_value=(False, 0)), \
          patch("util_verify.LocalClient.check_crash_dumps", return_value=(False, 0)), \
          patch("upgrade_runner.LocalClient.collect_log_bundle", return_value=None), \

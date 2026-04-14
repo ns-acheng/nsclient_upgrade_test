@@ -12,7 +12,15 @@ import pytest
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from main import cmd_versions, cmd_status, cmd_upgrade, connect_with_retry
+from main import (
+    _print_result,
+    cmd_versions,
+    cmd_status,
+    cmd_upgrade,
+    connect_with_retry,
+)
+from upgrade_runner import UpgradeResult
+from util_client import ExeValidationResult, UninstallEntryResult
 from util_config import ToolConfig, TenantConfig
 from util_webui import WebUIClient
 
@@ -329,3 +337,95 @@ class TestNsclientCheck:
         assert cmd_status(cfg) == 1
         output = capsys.readouterr().out
         assert "nsclient package is not installed" in output
+
+
+# ── final report formatting ─────────────────────────────────────────
+
+
+class TestFinalReportFormatting:
+    """Tests for final report output in _print_result."""
+
+    def test_print_result_shows_stagentsvc_and_watchdog_lines(
+        self, capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Report includes stAgentSvc and watchdog service/monitor statuses."""
+        exe = ExeValidationResult(
+            valid=False,
+            install_dir=r"C:\Program Files (x86)\Netskope\STAgent",
+            present=["stAgentSvc.exe", "stAgentUI.exe", "stAgentSvcMon.exe"],
+            missing=[],
+            version_mismatches=[
+                "stAgentSvcMon.exe: 135.1.10.2611 (expected 137.0.0.2657)",
+            ],
+            watchdog_mode=True,
+            processes_running=["stAgentSvc.exe", "stAgentUI.exe", "stAgentSvcMon.exe"],
+            processes_not_running=[],
+            stwatchdog_running=True,
+        )
+        unreg = UninstallEntryResult(
+            found=True,
+            display_name="Netskope Client",
+            display_version="137.0.0.2657",
+            install_location="",
+        )
+        result = UpgradeResult(
+            success=False,
+            scenario="upgrade_to_latest",
+            version_before="135.1.10.2611",
+            version_after="137.0.0.2657",
+            expected_version="137.0.0.2657",
+            webui_version="137.0.0.2657",
+            elapsed_seconds=897.5,
+            message="validation failed",
+            service_running=True,
+            exe_validation=exe,
+            uninstall_entry=unreg,
+        )
+
+        _print_result(result)
+
+        output = capsys.readouterr().out
+        assert "stAgentSvc svc:" in output
+        assert "stwatchdog svc:" in output
+        assert "Watchdog mon:" in output
+        assert "stAgentSvcMon.exe version 135.1.10.2611" in output
+
+    def test_print_result_shows_watchdog_service_fail_when_not_running(
+        self, capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Watchdog service line is FAIL when stwatchdog is not running."""
+        exe = ExeValidationResult(
+            valid=False,
+            install_dir=r"C:\Program Files (x86)\Netskope\STAgent",
+            present=["stAgentSvc.exe", "stAgentUI.exe", "stAgentSvcMon.exe"],
+            missing=[],
+            version_mismatches=[],
+            watchdog_mode=True,
+            processes_running=["stAgentSvc.exe", "stAgentUI.exe", "stAgentSvcMon.exe"],
+            processes_not_running=[],
+            stwatchdog_running=False,
+        )
+        result = UpgradeResult(
+            success=False,
+            scenario="upgrade_to_latest",
+            version_before="135.1.10.2611",
+            version_after="137.0.0.2657",
+            expected_version="137.0.0.2657",
+            webui_version="137.0.0.2657",
+            elapsed_seconds=10.0,
+            message="watchdog down",
+            service_running=True,
+            exe_validation=exe,
+            uninstall_entry=UninstallEntryResult(
+                found=True,
+                display_name="Netskope Client",
+                display_version="137.0.0.2657",
+                install_location="",
+            ),
+        )
+
+        _print_result(result)
+
+        output = capsys.readouterr().out
+        assert "stwatchdog svc:" in output
+        assert "NOT running" in output

@@ -259,7 +259,7 @@ class TestIsWatchdogMode:
 
     def test_watchdog_enabled(self, tmp_path: Path) -> None:
         """Returns True when nsclient_watchdog_monitor is true."""
-        cfg = {"nsclient_watchdog_monitor": True}
+        cfg = {"clientConfig": {"nsclient_watchdog_monitor": "true"}}
         config_file = tmp_path / "nsconfig.json"
         config_file.write_text(json.dumps(cfg), encoding="utf-8")
 
@@ -267,7 +267,7 @@ class TestIsWatchdogMode:
 
     def test_watchdog_disabled(self, tmp_path: Path) -> None:
         """Returns False when nsclient_watchdog_monitor is false."""
-        cfg = {"nsclient_watchdog_monitor": False}
+        cfg = {"clientConfig": {"nsclient_watchdog_monitor": "false"}}
         config_file = tmp_path / "nsconfig.json"
         config_file.write_text(json.dumps(cfg), encoding="utf-8")
 
@@ -275,7 +275,7 @@ class TestIsWatchdogMode:
 
     def test_watchdog_key_missing(self, tmp_path: Path) -> None:
         """Returns False when key is absent."""
-        cfg = {"other": "value"}
+        cfg = {"clientConfig": {"other": "value"}}
         config_file = tmp_path / "nsconfig.json"
         config_file.write_text(json.dumps(cfg), encoding="utf-8")
 
@@ -298,7 +298,10 @@ class TestVerifyExecutables:
             (tmp_path / exe).touch()
 
         nsconfig = tmp_path / "nsconfig.json"
-        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+        nsconfig.write_text(
+            '{"clientConfig": {"nsclient_watchdog_monitor": "false"}}',
+            encoding="utf-8",
+        )
 
         with patch("util_client.INSTALL_DIR_32", tmp_path), \
              patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"):
@@ -317,7 +320,10 @@ class TestVerifyExecutables:
         # stAgentUI.exe not created
 
         nsconfig = tmp_path / "nsconfig.json"
-        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+        nsconfig.write_text(
+            '{"clientConfig": {"nsclient_watchdog_monitor": "false"}}',
+            encoding="utf-8",
+        )
 
         with patch("util_client.INSTALL_DIR_64", tmp_path):
             result = LocalClient.verify_executables(
@@ -335,7 +341,10 @@ class TestVerifyExecutables:
         # stAgentSvcMon.exe not created
 
         nsconfig = tmp_path / "nsconfig.json"
-        nsconfig.write_text('{"nsclient_watchdog_monitor": true}', encoding="utf-8")
+        nsconfig.write_text(
+            '{"clientConfig": {"nsclient_watchdog_monitor": "true"}}',
+            encoding="utf-8",
+        )
 
         with patch("util_client.INSTALL_DIR_32", tmp_path), \
              patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"):
@@ -354,10 +363,15 @@ class TestVerifyExecutables:
         (tmp_path / WATCHDOG_EXECUTABLE).touch()
 
         nsconfig = tmp_path / "nsconfig.json"
-        nsconfig.write_text('{"nsclient_watchdog_monitor": true}', encoding="utf-8")
+        nsconfig.write_text(
+            '{"clientConfig": {"nsclient_watchdog_monitor": "true"}}',
+            encoding="utf-8",
+        )
 
         with patch("util_client.INSTALL_DIR_32", tmp_path), \
-             patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"):
+             patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"), \
+             patch.object(LocalClient, "get_process_instances", return_value=[(1234, "-watchdog")]), \
+             patch.object(LocalClient, "is_service_running", return_value=True):
             result = LocalClient.verify_executables(
                 is_64_bit=False, expected_version="95.1.0.900",
                 nsconfig_path=nsconfig,
@@ -372,7 +386,10 @@ class TestVerifyExecutables:
             (tmp_path / exe).touch()
 
         nsconfig = tmp_path / "nsconfig.json"
-        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+        nsconfig.write_text(
+            '{"clientConfig": {"nsclient_watchdog_monitor": "false"}}',
+            encoding="utf-8",
+        )
 
         with patch("util_client.INSTALL_DIR_32", tmp_path), \
              patch.object(LocalClient, "get_file_version", return_value="92.0.0.100"):
@@ -390,7 +407,10 @@ class TestVerifyExecutables:
             (tmp_path / exe).touch()
 
         nsconfig = tmp_path / "nsconfig.json"
-        nsconfig.write_text('{"nsclient_watchdog_monitor": false}', encoding="utf-8")
+        nsconfig.write_text(
+            '{"clientConfig": {"nsclient_watchdog_monitor": "false"}}',
+            encoding="utf-8",
+        )
 
         # File version is bare; expected has the display suffix
         with patch("util_client.INSTALL_DIR_64", tmp_path), \
@@ -403,6 +423,32 @@ class TestVerifyExecutables:
 
         assert result.valid is True
         assert len(result.version_mismatches) == 0
+
+    def test_watchdog_mode_service_down_fails_validation(self, tmp_path: Path) -> None:
+        """In watchdog mode, stwatchdog must be running for valid=True."""
+        for exe in REQUIRED_EXECUTABLES:
+            (tmp_path / exe).touch()
+        (tmp_path / WATCHDOG_EXECUTABLE).touch()
+
+        nsconfig = tmp_path / "nsconfig.json"
+        nsconfig.write_text(
+            '{"clientConfig": {"nsclient_watchdog_monitor": "true"}}',
+            encoding="utf-8",
+        )
+
+        with patch("util_client.INSTALL_DIR_32", tmp_path), \
+             patch.object(LocalClient, "get_file_version", return_value="95.1.0.900"), \
+             patch.object(LocalClient, "get_process_instances", return_value=[(1234, "-watchdog")]), \
+             patch.object(LocalClient, "is_service_running", return_value=False):
+            result = LocalClient.verify_executables(
+                is_64_bit=False,
+                expected_version="95.1.0.900",
+                nsconfig_path=nsconfig,
+            )
+
+        assert result.watchdog_mode is True
+        assert result.stwatchdog_running is False
+        assert result.valid is False
 
 
 # ── Uninstall registry entry ───────────────────────────────────────

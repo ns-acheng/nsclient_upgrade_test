@@ -39,10 +39,10 @@ class TestTimingEvent:
     """Tests for the TimingEvent enum."""
 
     def test_all_11_events_defined(self) -> None:
-        assert len(TimingEvent) == 11
+        assert len(TimingEvent) == 14
 
     def test_values_1_through_11(self) -> None:
-        for i in range(1, 12):
+        for i in range(1, 15):
             assert TimingEvent(i).value == i
 
     def test_descriptions_defined(self) -> None:
@@ -423,7 +423,7 @@ class TestDetectors:
         mock_query.return_value = MagicMock(
             exists=True, state="STOPPED",
         )
-        m = self._make_monitor(timings={"5": 30.0})
+        m = self._make_monitor(timings={"8": 30.0})
         assert m._detect_service_stopped_after_exit() is True
 
     @patch("util_monitor.LocalClient.query_service")
@@ -673,7 +673,7 @@ class TestReport:
         assert "20.3s" in output
         assert "55.0s" in output
         assert "N/A" in output
-        assert "Detected: 3/11" in output
+        assert "Detected: 3/14" in output
 
     def test_report_with_reboot(self, capsys: pytest.CaptureFixture) -> None:
         state = _sample_state(
@@ -695,7 +695,7 @@ class TestReport:
         )
         monitor.print_report()
         output = capsys.readouterr().out
-        assert "Detected: 0/11" in output
+        assert "Detected: 0/14" in output
 
 
 # ── Resume after reboot ──────────────────────────────────────────────

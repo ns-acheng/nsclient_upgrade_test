@@ -743,7 +743,7 @@ def _print_result(result: UpgradeResult) -> None:
     lines.append(f"  Expected version:  {result.expected_version}")
     lines.append(f"  WebUI version:     {result.webui_version}")
     svc_tag = "PASS" if result.service_running else "FAIL"
-    lines.append(f"  Service running:   [{svc_tag}]")
+    lines.append(f"  stAgentSvc svc:   [{svc_tag}] running")
     exe = result.exe_validation
     if exe:
         exe_tag = "PASS" if exe.valid else "FAIL"
