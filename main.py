@@ -170,11 +170,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write JSON result to this path (used by batch runner)",
     )
     upgrade_parser.add_argument(
-        "--reg", action="store_true",
+        "--simulate", action="store_true",
         help=(
             "Local-target only: set "
-            "HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress DWORD=1 "
-            "before local upgrade MSI install"
+            "HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress DWORD=1 and "
+            "set nsconfig cache.lastClientUpdated=1, "
+            "cache.newClientVer=137.0.0.2222 before local upgrade MSI install"
         ),
     )
 
@@ -629,8 +630,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
     stop_event = threading.Event()
     start_input_monitor(stop_event)
 
-    if args.reg and args.target != "local":
-        print("Error: --reg only works with --target local")
+    if args.simulate and args.target != "local":
+        print("Error: --simulate only works with --target local")
         return 2
 
     # Initialize local client (Phase 1 — no nsclient needed)
@@ -675,7 +676,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         save_config_fn=lambda: save_config(cfg, args.config),
         batch_mode=bool(args.result_file),
         original_argv=sys.argv[1:],
-        set_upgrade_reg=bool(args.reg),
+        simulate_upgrade=bool(args.simulate),
     )
 
     # Execute scenario

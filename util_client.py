@@ -1126,6 +1126,55 @@ class LocalClient:
             ) from exc
 
     @staticmethod
+    def set_upgrade_nsconfig_cache(
+        last_client_updated: str = "1",
+        new_client_ver: str = "137.0.0.2222",
+        nsconfig_path: Optional[Path] = None,
+    ) -> None:
+        """
+        Update simulation cache fields in nsconfig.json under the root ``cache`` node.
+
+        Fields written:
+        - ``cache.lastClientUpdated``
+        - ``cache.newClientVer``
+
+        :param last_client_updated: Value for ``cache.lastClientUpdated``.
+        :param new_client_ver: Value for ``cache.newClientVer``.
+        :param nsconfig_path: Optional override path for tests.
+        :raises RuntimeError: If file read/write fails.
+        """
+        path = nsconfig_path or LocalClient.NSCONFIG_PATH
+        if not path.is_file():
+            raise RuntimeError(f"nsconfig.json not found: {path}")
+
+        try:
+            with open(path, "r", encoding="utf-8") as file_obj:
+                config: dict[str, Any] = json.load(file_obj)
+
+            cache_obj = config.get("cache")
+            if not isinstance(cache_obj, dict):
+                cache_obj = {}
+                config["cache"] = cache_obj
+
+            cache_obj["lastClientUpdated"] = str(last_client_updated)
+            cache_obj["newClientVer"] = str(new_client_ver)
+
+            with open(path, "w", encoding="utf-8") as file_obj:
+                json.dump(config, file_obj, indent=4)
+                file_obj.write("\n")
+
+            log.info(
+                "Updated nsconfig cache simulation fields: "
+                "cache.lastClientUpdated=%s, cache.newClientVer=%s",
+                cache_obj["lastClientUpdated"],
+                cache_obj["newClientVer"],
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to update nsconfig cache simulation fields: {exc}"
+            ) from exc
+
+    @staticmethod
     def install_local_upgrade_msi(
         setup_file_path: str,
         sta_update_log_path: Path,

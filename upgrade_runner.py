@@ -85,7 +85,7 @@ class UpgradeRunner:
         save_config_fn: Optional[Callable[[], None]] = None,
         batch_mode: bool = False,
         original_argv: Optional[list[str]] = None,
-        set_upgrade_reg: bool = False,
+        simulate_upgrade: bool = False,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -126,7 +126,7 @@ class UpgradeRunner:
         self._original_argv: list[str] = original_argv or []
         self._watchdog_mode: bool = False
         self._auto_update_already_enabled: bool = False
-        self._set_upgrade_reg: bool = set_upgrade_reg
+        self._simulate_upgrade: bool = simulate_upgrade
 
         # Composed helpers
         self._installer = InstallerManager(
@@ -762,8 +762,12 @@ class UpgradeRunner:
 
             def _install_worker() -> None:
                 try:
-                    if self._set_upgrade_reg:
+                    if self._simulate_upgrade:
                         LocalClient.set_upgrade_in_progress(1)
+                        LocalClient.set_upgrade_nsconfig_cache(
+                            last_client_updated="1",
+                            new_client_ver="137.0.0.2222",
+                        )
 
                     sta_update_log = (
                         (self._log_dir or LOG_DIR) / "STAUpdate.txt"
