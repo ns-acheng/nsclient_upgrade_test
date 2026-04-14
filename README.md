@@ -138,6 +138,35 @@ python main.py upgrade --target golden
 python main.py upgrade --target golden-dot
 ```
 
+#### Upgrade from local MSI (`--target local`)
+
+Use local installer files from `data/upgrade_version/`:
+
+```
+data/upgrade_version/
+  stagent.msi      <-- 32-bit upgrade MSI
+  stagent64.msi    <-- 64-bit upgrade MSI
+```
+
+Examples:
+
+```bash
+# Local MSI upgrade
+python main.py upgrade --target local --email user@example.com
+
+# Local MSI upgrade with simulation pre-actions
+python main.py upgrade --target local --simulate --email user@example.com
+```
+
+When `--simulate` is set (local target only), the tool performs these
+actions immediately before executing the local upgrade MSI:
+
+1. Set registry DWORD value
+  `HKLM\SOFTWARE\Netskope\UpgradeInProgress = 1`
+2. Update `C:\ProgramData\netskope\stagent\nsconfig.json` (root `cache` node):
+  - `cache.lastClientUpdated = "1"`
+  - `cache.newClientVer = "137.0.0.2222"`
+
 #### Upgrade with timing monitor
 
 Monitor 14 upgrade lifecycle events in a background thread while the
@@ -437,14 +466,14 @@ so the same email always gets the same profile across runs.
 
 | Option | Description |
 | --- | --- |
-| `--target` | **Required** (upgrade only). `latest`, `golden`, or `golden-dot` |
+| `--target` | **Required** (upgrade only). `latest`, `golden`, `golden-dot`, or `local` |
 | `--from-version` | Build version for download fallback (e.g. `123.0.0`) |
 | `--source-64bit` | Source (base) install is 64-bit |
 | `--target-64bit` | Upgrade target is 64-bit |
 | `--email` | Send enrollment email invite before upgrade |
 | `--reboottime N` | Timing number (1-14) that triggers a reboot during upgrade |
 | `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
-| `--reg` | Local-target only (`--target local`): set `HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress` DWORD=1 before local MSI install |
+| `--simulate` | Local-target only (`--target local`): set `HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress` DWORD=1 and update `nsconfig.json` cache (`lastClientUpdated=\"1\"`, `newClientVer=\"137.0.0.2222\"`) before local MSI install |
 
 ## Unit Tests
 
