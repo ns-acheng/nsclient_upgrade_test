@@ -188,11 +188,7 @@ class GmailBrowser:
 
         # Wait for results
         try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "tr.zA")
-                )
-            )
+            self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
             count: int = driver.execute_script(
                 "return document.querySelectorAll("
                 "'tr.zA, tr.zE').length;"
@@ -317,11 +313,7 @@ class GmailBrowser:
 
             # Wait for inbox rows to load
             try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, "tr.zA, tr.zE")
-                    )
-                )
+                self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
             except TimeoutException:
                 remaining = deadline - time.monotonic()
                 log.info(
@@ -413,11 +405,7 @@ class GmailBrowser:
         self._dismiss_overlays(driver, By)
 
         try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "tr.zA, tr.zE")
-                )
-            )
+            self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
         except TimeoutException:
             log.info("No inbox rows found")
             return 0
@@ -476,9 +464,7 @@ class GmailBrowser:
         search_box.send_keys(Keys.RETURN)
 
         try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "tr.zA"))
-            )
+            self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
             count: int = driver.execute_script(
                 "return document.querySelectorAll('tr.zA, tr.zE').length;"
             )
@@ -552,11 +538,7 @@ class GmailBrowser:
 
             # Step 4: Wait for results and count rows
             try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, "tr.zA")
-                    )
-                )
+                self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
                 row_count = int(driver.execute_script(
                     "return document.querySelectorAll("
                     "'tr.zA, tr.zE').length;"
@@ -802,29 +784,81 @@ class GmailBrowser:
         """
         Locate the Gmail search input.
 
-        Uses XPath combining both ``name`` and ``aria-label`` attributes
-        for a precise match.  Falls back to ``name="q"`` alone if the
-        combined selector times out.
+        Uses a resilient XPath-first locator chain to tolerate Gmail UI
+        variations and delayed rendering.
 
         :param timeout: Seconds to wait for the primary selector.
         :return: The search box WebElement.
-        :raises TimeoutException: If neither selector finds the element.
+        :raises TimeoutException: If no suitable input is found in time.
         """
         from selenium.common.exceptions import TimeoutException
 
-        try:
-            return WebDriverWait(driver, timeout).until(
-                EC.visibility_of_element_located((
-                    By.XPATH,
-                    '//input[@name="q" and @aria-label="Search mail"]',
-                ))
-            )
-        except TimeoutException:
-            return WebDriverWait(driver, 10).until(
-                EC.visibility_of_element_located((
-                    By.CSS_SELECTOR, 'input[name="q"]',
-                ))
-            )
+        locators: list[tuple[str, str]] = [
+            (
+                By.XPATH,
+                '//input[@name="q" and '
+                '(@aria-label="Search mail" or contains(@aria-label, "Search"))]',
+            ),
+            (
+                By.XPATH,
+                '//input[@name="q" and @placeholder="Search mail"]',
+            ),
+            (
+                By.XPATH,
+                '//input[@name="q" and @type="text"]',
+            ),
+            (
+                By.XPATH,
+                '//form//input[@name="q"]',
+            ),
+        ]
+
+        end_time = time.monotonic() + timeout
+        while time.monotonic() < end_time:
+            GmailBrowser._dismiss_overlays(driver, By)
+            for by, selector in locators:
+                try:
+                    elements = driver.find_elements(by, selector)
+                except Exception:
+                    continue
+                if not elements:
+                    continue
+                for element in elements:
+                    try:
+                        if element.is_displayed() and element.is_enabled():
+                            return element
+                    except Exception:
+                        continue
+                # Fallback in case visibility state is unreliable.
+                return elements[0]
+            time.sleep(0.5)
+
+        raise TimeoutException("Gmail search box not found")
+
+    @staticmethod
+    def _wait_for_email_rows(
+        driver: Any, By: Any, WebDriverWait: Any, timeout: int = 15,
+    ) -> Any:
+        """Wait for email rows using resilient selectors (XPath first)."""
+        locators: list[tuple[str, str]] = [
+            (
+                By.XPATH,
+                '//tr[contains(@class,"zA") or contains(@class,"zE")]',
+            ),
+            (
+                By.CSS_SELECTOR,
+                'tr.zA, tr.zE',
+            ),
+        ]
+
+        def _pick_row(drv: Any) -> Any:
+            for by, selector in locators:
+                rows = drv.find_elements(by, selector)
+                if rows:
+                    return rows[0]
+            return False
+
+        return WebDriverWait(driver, timeout).until(_pick_row)
 
     @staticmethod
     def _is_port_open(port: int, timeout: float = 2.0) -> bool:
@@ -859,12 +893,12 @@ class GmailBrowser:
 
         try:
             self._driver.get(GMAIL_URL)
-            WebDriverWait(self._driver, 15).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR,
-                     'input[aria-label="Search mail"],'
-                     ' input[name="q"]')
-                )
+            self._find_search_box(
+                self._driver,
+                By,
+                EC,
+                WebDriverWait,
+                timeout=15,
             )
             return True
         except Exception:
