@@ -77,3 +77,15 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 - **cleanup non-zero exit is non-fatal**: Mock `subprocess.run` return code != 0 and verify warning is logged but install flow proceeds.
 - **cleanup exception is non-fatal**: Mock `subprocess.run` raising exception and verify warning is logged and install flow proceeds.
 - **cleanup command shape**: Verify execution uses `cmd.exe /c <repo>/tool/cleanup.bat`.
+
+## test_main.py / test_upgrade_runner.py / test_util_client.py — `--reg` local upgrade flow
+
+- **CLI gate (`--reg` only with local target)**: `main.py upgrade --target latest --reg` returns usage error and does not run scenario.
+- **CLI pass-through to runner**: `main.py upgrade --target local --reg` constructs `UpgradeRunner(..., set_upgrade_reg=True)`.
+- **local flow without `--reg`**: Verify `run_upgrade_from_local()` does not call `set_upgrade_in_progress()` but still runs local msiexec command.
+- **local flow with `--reg`**: Verify `set_upgrade_in_progress(1)` is called before local msiexec install starts.
+- **STAUpdate command shape**: Verify local upgrade uses `msiexec /l*v+ <log_dir>/STAUpdate.txt /i <upgrade_msi> /qn`.
+- **STAUpdate log path fallback**: If no scenario log dir exists yet, verify fallback path uses `LOG_DIR/STAUpdate.txt`.
+- **monitor/install concurrency**: Verify monitor starts before install worker runs and reboot timings can still be observed.
+- **registry write helper success**: `LocalClient.set_upgrade_in_progress()` creates/sets HKLM key default DWORD to 1.
+- **registry write helper failure**: Registry exceptions raise `RuntimeError` with clear context.

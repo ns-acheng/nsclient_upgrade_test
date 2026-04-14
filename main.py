@@ -137,8 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--reboottime", type=int, default=None,
-        choices=range(1, 14), metavar="N",
-        help="Timing number (1-13) that triggers a reboot during upgrade",
+        choices=range(1, 15), metavar="N",
+        help="Timing number (1-14) that triggers a reboot during upgrade",
     )
     upgrade_parser.add_argument(
         "--rebootdelay", type=int, default=5,
@@ -168,6 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade_parser.add_argument(
         "--result-file", dest="result_file", default=None,
         help="Write JSON result to this path (used by batch runner)",
+    )
+    upgrade_parser.add_argument(
+        "--reg", action="store_true",
+        help=(
+            "Local-target only: set "
+            "HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress DWORD=1 "
+            "before local upgrade MSI install"
+        ),
     )
 
     # ── disable-upgrade ─────────────────────────────────────────
@@ -625,6 +633,10 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
     stop_event = threading.Event()
     start_input_monitor(stop_event)
 
+    if args.reg and args.target != "local":
+        print("Error: --reg only works with --target local")
+        return 2
+
     # Initialize local client (Phase 1 — no nsclient needed)
     client = LocalClient(platform=cfg.client.platform)
 
@@ -653,6 +665,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         save_config_fn=lambda: save_config(cfg, args.config),
         batch_mode=bool(args.result_file),
         original_argv=sys.argv[1:],
+        set_upgrade_reg=bool(args.reg),
     )
 
     # Execute scenario

@@ -1065,6 +1065,76 @@ class LocalClient:
                 LocalClient.UPGRADE_IN_PROGRESS_KEY,
             )
             return False
+
+    @staticmethod
+    def set_upgrade_in_progress(value: int = 1) -> None:
+        """
+        Set ``HKLM\SOFTWARE\Netskope\UpgradeInProgress`` default DWORD.
+
+        :param value: DWORD value to write (default: 1).
+        :raises RuntimeError: If registry write fails.
+        """
+        import winreg
+
+        try:
+            with winreg.CreateKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                LocalClient.UPGRADE_IN_PROGRESS_KEY,
+            ) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_DWORD, int(value))
+            log.info(
+                "Set UpgradeInProgress registry DWORD to %d",
+                value,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to set UpgradeInProgress registry key: {exc}"
+            ) from exc
+
+    @staticmethod
+    def install_local_upgrade_msi(
+        setup_file_path: str,
+        sta_update_log_path: Path,
+    ) -> None:
+        """
+        Install a local upgrade MSI with STAUpdate logging format.
+
+        Command shape:
+            msiexec /l*v+ "<STAUpdate.txt>" /i "<msi>" /qn
+
+        :param setup_file_path: Full path to local upgrade MSI.
+        :param sta_update_log_path: Full path to STAUpdate.txt.
+        :raises RuntimeError: If not admin or msiexec fails.
+        """
+        if not LocalClient._is_admin():
+            raise RuntimeError(
+                "msiexec /qn requires administrator privileges. "
+                "Re-run the script as Administrator."
+            )
+
+        sta_update_log_path.parent.mkdir(parents=True, exist_ok=True)
+        log.info(
+            "Installing local upgrade via msiexec: %s (log: %s)",
+            setup_file_path, sta_update_log_path,
+        )
+        result = subprocess.run(
+            [
+                "msiexec",
+                "/l*v+", str(sta_update_log_path),
+                "/i", setup_file_path,
+                "/qn",
+            ],
+            capture_output=True,
+            timeout=300,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Local upgrade msiexec failed "
+                f"(exit code {result.returncode})"
+            )
+        log.info("Local upgrade msiexec completed")
         except OSError as exc:
             log.warning(
                 "Error reading registry key HKLM\\%s: %s",

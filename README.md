@@ -442,8 +442,9 @@ so the same email always gets the same profile across runs.
 | `--source-64bit` | Source (base) install is 64-bit |
 | `--target-64bit` | Upgrade target is 64-bit |
 | `--email` | Send enrollment email invite before upgrade |
-| `--reboottime N` | Timing number (1-13) that triggers a reboot during upgrade |
+| `--reboottime N` | Timing number (1-14) that triggers a reboot during upgrade |
 | `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
+| `--reg` | Local-target only (`--target local`): set `HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress` DWORD=1 before local MSI install |
 
 ## Unit Tests
 

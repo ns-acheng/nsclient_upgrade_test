@@ -85,6 +85,7 @@ class UpgradeRunner:
         save_config_fn: Optional[Callable[[], None]] = None,
         batch_mode: bool = False,
         original_argv: Optional[list[str]] = None,
+        set_upgrade_reg: bool = False,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -99,7 +100,7 @@ class UpgradeRunner:
         :param email: User email for WebUI verification.
         :param source_64_bit: Whether the base (source) install is 64-bit.
         :param target_64_bit: Whether the upgrade target is 64-bit.
-        :param reboot_time: Timing number (1-13) that triggers a reboot.
+        :param reboot_time: Timing number (1-14) that triggers a reboot.
         :param reboot_delay: Seconds before reboot after timing fires.
         :param reboot_action: Action at reboot timing (2=kill monitor+reboot,
                               3=kill monitor+msiexec+reboot). None=default reboot.
@@ -125,6 +126,7 @@ class UpgradeRunner:
         self._original_argv: list[str] = original_argv or []
         self._watchdog_mode: bool = False
         self._auto_update_already_enabled: bool = False
+        self._set_upgrade_reg: bool = set_upgrade_reg
 
         # Composed helpers
         self._installer = InstallerManager(
@@ -760,9 +762,15 @@ class UpgradeRunner:
 
             def _install_worker() -> None:
                 try:
-                    self.client.install_msi(
+                    if self._set_upgrade_reg:
+                        LocalClient.set_upgrade_in_progress(1)
+
+                    sta_update_log = (
+                        (self._log_dir or LOG_DIR) / "STAUpdate.txt"
+                    )
+                    self.client.install_local_upgrade_msi(
                         str(upgrade_installer),
-                        log_dir=self._log_dir,
+                        sta_update_log,
                     )
                 except Exception as exc:
                     install_error[0] = exc
@@ -1171,7 +1179,7 @@ class UpgradeRunner:
         Timing 3 (stAgentSvcMon.exe -monitor starts) never fires in watchdog
         mode — the monitor process lifecycle is managed differently.
         """
-        if self.reboot_time in (3, 13) and self._watchdog_mode:
+        if self.reboot_time in (3, 14) and self._watchdog_mode:
             label = (
                 "stAgentSvcMon.exe -monitor"
                 if self.reboot_time == 3
