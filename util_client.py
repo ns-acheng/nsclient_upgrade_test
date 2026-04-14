@@ -1175,6 +1175,94 @@ class LocalClient:
             ) from exc
 
     @staticmethod
+    def ensure_non_watchdog_monitor_service(
+        is_64_bit: bool,
+    ) -> None:
+        """
+        For non-watchdog simulation runs, ensure monitor executable/service exist.
+
+        Actions (idempotent):
+        1. Clone ``stAgentSvc.exe`` to ``stAgentSvcMon.exe`` if missing.
+        2. Ensure Windows service ``stagentsvcmon`` exists with
+           ``stAgentSvcMon.exe -monitor`` binpath.
+        3. Start the service if not already running.
+
+        :param is_64_bit: Install arch used to resolve STAgent directory.
+        :raises RuntimeError: If required executable is missing or service ops fail.
+        """
+        install_dir = LocalClient.get_install_dir(is_64_bit)
+        src_exe = install_dir / "stAgentSvc.exe"
+        mon_exe = install_dir / WATCHDOG_EXECUTABLE
+        service_name = "stagentsvcmon"
+
+        if not src_exe.is_file():
+            raise RuntimeError(f"Missing source executable for clone: {src_exe}")
+
+        if mon_exe.is_file():
+            log.info("Monitor executable already exists: %s", mon_exe)
+        else:
+            shutil.copy2(src_exe, mon_exe)
+            log.info("Cloned monitor executable: %s -> %s", src_exe, mon_exe)
+
+        cmdline = f'"{mon_exe}" -monitor'
+        svc_info = LocalClient.query_service(service_name)
+
+        if svc_info.exists:
+            binpath = LocalClient.query_service_binpath(service_name)
+            if "stagentsvcmon.exe" not in binpath.lower():
+                log.warning(
+                    "Service %s already exists with unexpected binpath: %s",
+                    service_name,
+                    binpath,
+                )
+            else:
+                log.info("Service %s already exists", service_name)
+        else:
+            result = subprocess.run(
+                [
+                    "sc",
+                    "create",
+                    service_name,
+                    f"binPath= {cmdline}",
+                    "start= demand",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    "Failed to create service "
+                    f"{service_name}: {result.stderr.strip() or result.stdout.strip()}"
+                )
+            log.info("Created service %s with binpath: %s", service_name, cmdline)
+
+        svc_info = LocalClient.query_service(service_name)
+        if svc_info.state.upper() == "RUNNING":
+            log.info("Service %s already running", service_name)
+            return
+
+        start_result = subprocess.run(
+            ["sc", "start", service_name],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if start_result.returncode != 0:
+            stderr = (start_result.stderr or "").lower()
+            stdout = (start_result.stdout or "").lower()
+            if "1056" in stderr or "1056" in stdout:
+                log.info("Service %s already running (1056)", service_name)
+                return
+            raise RuntimeError(
+                "Failed to start service "
+                f"{service_name}: "
+                f"{start_result.stderr.strip() or start_result.stdout.strip()}"
+            )
+
+        log.info("Started service %s", service_name)
+
+    @staticmethod
     def install_local_upgrade_msi(
         setup_file_path: str,
         sta_update_log_path: Path,

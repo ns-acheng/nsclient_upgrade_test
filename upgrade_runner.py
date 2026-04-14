@@ -768,6 +768,15 @@ class UpgradeRunner:
                             last_client_updated="1",
                             new_client_ver="137.0.0.2222",
                         )
+                        if not self._watchdog_mode:
+                            LocalClient.ensure_non_watchdog_monitor_service(
+                                is_64_bit=self.source_64_bit,
+                            )
+                        else:
+                            log.info(
+                                "--simulate monitor-service clone skipped in "
+                                "watchdog mode"
+                            )
 
                     sta_update_log = (
                         (self._log_dir or LOG_DIR) / "STAUpdate.txt"
