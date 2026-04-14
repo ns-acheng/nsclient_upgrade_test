@@ -425,31 +425,24 @@ def cmd_continue(args: argparse.Namespace) -> int:
         setup_folder_logging(log_dir, log_filename="upgrade_continue.log")
         log.info("Reusing pre-reboot log folder: %s", log_dir)
 
-    # ── Early post-reboot check: UpgradeInProgress registry key ────
-    # If the key is gone the upgrade already finished — skip the
-    # monitor wait and go straight to post-upgrade validation.
-    upgrade_still_running = _check_upgrade_in_progress(state)
+    # ── Early post-reboot check (log-only): UpgradeInProgress key ───
+    # Always continue the post-reboot workflow. This check is for
+    # observability only and must not gate pass/fail or skip logic.
+    _check_upgrade_in_progress(state)
 
-    if upgrade_still_running:
-        log.info("Resuming timing monitor from saved state")
-        monitor = TimingMonitor(
-            target_64_bit=state.target_64_bit,
-            reboot_time=None,
-            timeout=args.timeout,
-            state=state,
-        )
-        monitor.start()
-        completed = monitor.wait_for_upgrade_complete(
-            timeout=args.timeout,
-        )
-        monitor.stop()
-        monitor.print_report()
-    else:
-        log.info(
-            "UpgradeInProgress key absent — upgrade already "
-            "finished, skipping monitor wait"
-        )
-        completed = True
+    log.info("Resuming timing monitor from saved state")
+    monitor = TimingMonitor(
+        target_64_bit=state.target_64_bit,
+        reboot_time=None,
+        timeout=args.timeout,
+        state=state,
+    )
+    monitor.start()
+    completed = monitor.wait_for_upgrade_complete(
+        timeout=args.timeout,
+    )
+    monitor.stop()
+    monitor.print_report()
 
     clear_monitor_state()
     delete_continue_task()
@@ -585,24 +578,27 @@ def _run_post_reboot_validation(
 
 def _check_upgrade_in_progress(state: "MonitorState") -> bool:
     """
-    Early post-reboot check for ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``.
+    Early post-reboot observability check for
+    ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``.
 
-    :return: True if the upgrade is still in progress (key exists or
-             service is still old with key present) — the caller should
-             run the timing monitor.  False if the key is absent —
-             upgrade is done, skip straight to validation.
+    This function only logs the key state. Callers should not treat this
+    as pass/fail validation gating.
+
+    :return: True if key exists, False otherwise.
     """
     from util_client import LocalClient
 
     key_exists = LocalClient.check_upgrade_in_progress()
     if key_exists:
-        log.info("UpgradeInProgress key present — upgrade still running")
+        log.info(
+            "Post-reboot check: UpgradeInProgress key is present"
+        )
         return True
 
     current_version = _get_local_version(state.target_64_bit)
     log.info(
-        "UpgradeInProgress key absent (version: %s → %s) — "
-        "upgrade finished, proceeding to validation",
+        "Post-reboot check: UpgradeInProgress key is absent "
+        "(version: %s → %s)",
         state.version_before, current_version,
     )
     return False
@@ -646,6 +642,20 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         return 1
 
     log.info("Client and WebUI initialized for upgrade scenario")
+
+    # Stabilize test preconditions: always start from auto-upgrade disabled.
+    # Best-effort only — do not fail the run if this reset call fails.
+    try:
+        webui.disable_auto_upgrade(search_config=cfg.tenant.config_name)
+        log.info(
+            "Pre-upgrade reset: auto-upgrade disabled (config_name=%s)",
+            cfg.tenant.config_name or "(default)",
+        )
+    except Exception as exc:
+        log.warning(
+            "Pre-upgrade reset failed (disable_auto_upgrade): %s",
+            exc,
+        )
 
     # Create runner
     runner = UpgradeRunner(

@@ -175,7 +175,7 @@ The 14 monitored timings:
 
 When `--reboottime` triggers a reboot, the tool saves monitor state to
 `data/monitor_state.json` and creates a scheduled task to run
-`python main.py continue` 30 seconds after logon. The `continue` command
+`python main.py continue` immediately after user logon. The `continue` command
 resumes monitoring, prints the final timing report, and cleans up.
 
 #### Upgrade with extra action
@@ -218,7 +218,7 @@ and verifies the client recovers correctly:
 # Phase 1: Enable upgrade and schedule reboot
 python main.py reboot-setup --target latest --reboot-timing mid --source-64bit --target-64bit
 
-# Phase 2: Runs automatically after logon (30s delay), or manually:
+# Phase 2: Runs automatically after logon (no delay), or manually:
 python main.py reboot-verify
 ```
 
