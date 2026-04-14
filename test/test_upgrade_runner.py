@@ -112,6 +112,7 @@ def no_real_io() -> Any:
          patch("upgrade_runner.LocalClient.collect_log_bundle", return_value=None), \
          patch("upgrade_runner.LocalClient.handle_crash", return_value=None), \
          patch("util_verify.LocalClient.handle_crash", return_value=None), \
+            patch("util_installer.InstallerManager._run_cleanup_batch", return_value=None), \
          patch("upgrade_runner.setup_folder_logging", return_value=Path("fake.log")), \
          patch("upgrade_runner.rename_log_dir", side_effect=lambda old, new: new), \
          patch("util_installer.time.sleep", return_value=None), \

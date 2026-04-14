@@ -9,6 +9,7 @@ retry logic for bad tokens (exit code 1603).
 import json
 import logging
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -23,6 +24,7 @@ from util_webui import WebUIClient
 BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
 INSTALLER_JSON = Path(__file__).parent / "data" / "installer.json"
 UPGRADE_VERSION_DIR = Path(__file__).parent / "data" / "upgrade_version"
+CLEANUP_BAT_PATH = Path(__file__).parent / "tool" / "cleanup.bat"
 
 log = logging.getLogger(__name__)
 
@@ -189,6 +191,7 @@ class InstallerManager:
             needs_uninstall = True
         else:
             log.info("No existing installation found")
+            self._run_cleanup_batch()
 
         if needs_uninstall:
             _start_email_thread()
@@ -267,6 +270,43 @@ class InstallerManager:
                 "Client service (stAgentSvc) did not start "
                 "after installation"
             )
+
+    def _run_cleanup_batch(self) -> None:
+        """
+        Best-effort environment cleanup when no client is detected.
+
+        Runs ``tool/cleanup.bat`` to remove stale services/files that may
+        have been left from previous test runs. Failures are logged but do
+        not abort installation.
+        """
+        if not CLEANUP_BAT_PATH.is_file():
+            log.warning(
+                "Cleanup script not found: %s",
+                CLEANUP_BAT_PATH,
+            )
+            return
+
+        log.info(
+            "No client detected — running cleanup script: %s",
+            CLEANUP_BAT_PATH,
+        )
+        try:
+            result = subprocess.run(
+                ["cmd.exe", "/c", str(CLEANUP_BAT_PATH)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            if result.returncode != 0:
+                log.warning(
+                    "Cleanup script exited with code %d: %s",
+                    result.returncode,
+                    (result.stderr or "").strip(),
+                )
+            else:
+                log.info("Cleanup script completed")
+        except Exception as exc:
+            log.warning("Cleanup script failed: %s", exc)
 
     def cleanup(self) -> None:
         """Close Gmail browser and delete cloned installer."""
