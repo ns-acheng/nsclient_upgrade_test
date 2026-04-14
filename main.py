@@ -425,7 +425,7 @@ def cmd_continue(args: argparse.Namespace) -> int:
         setup_folder_logging(log_dir, log_filename="upgrade_continue.log")
         log.info("Reusing pre-reboot log folder: %s", log_dir)
 
-    # ── Early post-reboot check (log-only): UpgradeInProgress key ───
+    # ── Early post-reboot check (log-only): UpgradeInProgress value ─
     # Always continue the post-reboot workflow. This check is for
     # observability only and must not gate pass/fail or skip logic.
     _check_upgrade_in_progress(state)
@@ -581,23 +581,23 @@ def _check_upgrade_in_progress(state: "MonitorState") -> bool:
     Early post-reboot observability check for
     ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``.
 
-    This function only logs the key state. Callers should not treat this
+    This function only logs the DWORD value state. Callers should not treat this
     as pass/fail validation gating.
 
-    :return: True if key exists, False otherwise.
+    :return: True if value exists and is non-zero, False otherwise.
     """
     from util_client import LocalClient
 
-    key_exists = LocalClient.check_upgrade_in_progress()
-    if key_exists:
+    value_enabled = LocalClient.check_upgrade_in_progress()
+    if value_enabled:
         log.info(
-            "Post-reboot check: UpgradeInProgress key is present"
+            "Post-reboot check: UpgradeInProgress DWORD is present and non-zero"
         )
         return True
 
     current_version = _get_local_version(state.target_64_bit)
     log.info(
-        "Post-reboot check: UpgradeInProgress key is absent "
+        "Post-reboot check: UpgradeInProgress DWORD is missing or zero "
         "(version: %s → %s)",
         state.version_before, current_version,
     )

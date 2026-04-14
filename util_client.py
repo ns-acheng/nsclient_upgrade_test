@@ -1032,44 +1032,70 @@ class LocalClient:
 
     # ── Upgrade-In-Progress Registry Check ─────────────────────────────
 
-    UPGRADE_IN_PROGRESS_KEY = r"SOFTWARE\Netskope\UpgradeInProgress"
+    UPGRADE_REG_KEY = r"SOFTWARE\Netskope"
+    UPGRADE_IN_PROGRESS_VALUE = "UpgradeInProgress"
 
     @staticmethod
     def check_upgrade_in_progress() -> bool:
         """
-        Check whether ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``
-        exists in the registry.
+        Check whether DWORD value
+        ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress`` exists and is non-zero.
 
-        This key is created by the installer at the start of an upgrade
-        and removed when the upgrade finishes.  Immediately after a
-        reboot the key should still be present if the service executable
-        has not yet been replaced.
+        The value is created/updated by the installer at the start of an
+        upgrade and cleared/removed when the upgrade finishes. Immediately
+        after reboot, the value may still be present while upgrade work is
+        continuing.
 
-        :return: True if the registry key exists.
+        :return: True if value exists and int(value) != 0, False otherwise.
         """
         import winreg
 
         try:
             with winreg.OpenKey(
                 winreg.HKEY_LOCAL_MACHINE,
-                LocalClient.UPGRADE_IN_PROGRESS_KEY,
-            ):
-                log.info(
-                    "Registry key found: HKLM\\%s",
-                    LocalClient.UPGRADE_IN_PROGRESS_KEY,
+                LocalClient.UPGRADE_REG_KEY,
+            ) as key:
+                raw_value, reg_type = winreg.QueryValueEx(
+                    key,
+                    LocalClient.UPGRADE_IN_PROGRESS_VALUE,
                 )
-                return True
+                value = int(raw_value)
+                log.info(
+                    "Registry value found: HKLM\\%s\\%s=%d (type=%s)",
+                    LocalClient.UPGRADE_REG_KEY,
+                    LocalClient.UPGRADE_IN_PROGRESS_VALUE,
+                    value,
+                    reg_type,
+                )
+                return value != 0
         except FileNotFoundError:
             log.info(
-                "Registry key NOT found: HKLM\\%s",
-                LocalClient.UPGRADE_IN_PROGRESS_KEY,
+                "Registry value NOT found: HKLM\\%s\\%s",
+                LocalClient.UPGRADE_REG_KEY,
+                LocalClient.UPGRADE_IN_PROGRESS_VALUE,
+            )
+            return False
+        except (TypeError, ValueError) as exc:
+            log.warning(
+                "Registry value invalid: HKLM\\%s\\%s (%s)",
+                LocalClient.UPGRADE_REG_KEY,
+                LocalClient.UPGRADE_IN_PROGRESS_VALUE,
+                exc,
+            )
+            return False
+        except OSError as exc:
+            log.warning(
+                "Error reading registry HKLM\\%s\\%s: %s",
+                LocalClient.UPGRADE_REG_KEY,
+                LocalClient.UPGRADE_IN_PROGRESS_VALUE,
+                exc,
             )
             return False
 
     @staticmethod
     def set_upgrade_in_progress(value: int = 1) -> None:
         """
-        Set ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress`` default DWORD.
+        Set DWORD value ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress``.
 
         :param value: DWORD value to write (default: 1).
         :raises RuntimeError: If registry write fails.
@@ -1079,16 +1105,24 @@ class LocalClient:
         try:
             with winreg.CreateKey(
                 winreg.HKEY_LOCAL_MACHINE,
-                LocalClient.UPGRADE_IN_PROGRESS_KEY,
+                LocalClient.UPGRADE_REG_KEY,
             ) as key:
-                winreg.SetValueEx(key, "", 0, winreg.REG_DWORD, int(value))
+                winreg.SetValueEx(
+                    key,
+                    LocalClient.UPGRADE_IN_PROGRESS_VALUE,
+                    0,
+                    winreg.REG_DWORD,
+                    int(value),
+                )
             log.info(
-                "Set UpgradeInProgress registry DWORD to %d",
+                "Set registry value HKLM\\%s\\%s=%d",
+                LocalClient.UPGRADE_REG_KEY,
+                LocalClient.UPGRADE_IN_PROGRESS_VALUE,
                 value,
             )
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to set UpgradeInProgress registry key: {exc}"
+                f"Failed to set UpgradeInProgress registry value: {exc}"
             ) from exc
 
     @staticmethod
