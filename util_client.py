@@ -1069,7 +1069,7 @@ class LocalClient:
     @staticmethod
     def set_upgrade_in_progress(value: int = 1) -> None:
         """
-        Set ``HKLM\SOFTWARE\Netskope\UpgradeInProgress`` default DWORD.
+        Set ``HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress`` default DWORD.
 
         :param value: DWORD value to write (default: 1).
         :raises RuntimeError: If registry write fails.
@@ -1135,12 +1135,6 @@ class LocalClient:
                 f"(exit code {result.returncode})"
             )
         log.info("Local upgrade msiexec completed")
-        except OSError as exc:
-            log.warning(
-                "Error reading registry key HKLM\\%s: %s",
-                LocalClient.UPGRADE_IN_PROGRESS_KEY, exc,
-            )
-            return False
 
     # ── Crash Dump Detection & Log Bundle ──────────────────────────────
 
