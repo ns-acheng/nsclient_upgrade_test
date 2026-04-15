@@ -114,8 +114,100 @@ class LocalClient:
         self._email: str = ""
 
     NSCONFIG_PATH = Path(r"C:\ProgramData\netskope\stagent\nsconfig.json")
+    NSCONFIG_ENC_PATH = Path(r"C:\ProgramData\netskope\stagent\nsconfig.enc")
     NSDIAG_PATH_32 = Path(r"C:\Program Files (x86)\Netskope\STAgent\nsdiag.exe")
     NSDIAG_PATH_64 = Path(r"C:\Program Files\Netskope\STAgent\nsdiag.exe")
+
+    @staticmethod
+    def _strip_trailing_dot(value: str) -> str:
+        """Normalize nsdiag field values by removing trailing dot/space."""
+        return value.strip().rstrip(".").strip()
+
+    @staticmethod
+    def _extract_tenant_from_gateway(gateway: str) -> str:
+        """Convert gateway host to tenant host (strip leading gateway-)."""
+        host = LocalClient._strip_trailing_dot(gateway)
+        return host[len("gateway-"):] if host.startswith("gateway-") else host
+
+    @staticmethod
+    def detect_tenant_from_nsdiag(
+        is_64_bit: Optional[bool] = None,
+    ) -> NsConfigInfo | None:
+        """
+        Detect tenant/config from ``nsdiag.exe -f`` output.
+
+        Primary field is ``Tenant URL``. If missing, falls back to
+        ``Gateway`` (with ``gateway-`` prefix stripped).
+
+        :param is_64_bit: Prefer 64-bit nsdiag when True, 32-bit when False,
+                          or auto-detect when None.
+        :return: NsConfigInfo when parsed, otherwise None.
+        """
+        paths_to_try: list[Path]
+        if is_64_bit is True:
+            paths_to_try = [LocalClient.NSDIAG_PATH_64, LocalClient.NSDIAG_PATH_32]
+        elif is_64_bit is False:
+            paths_to_try = [LocalClient.NSDIAG_PATH_32, LocalClient.NSDIAG_PATH_64]
+        else:
+            paths_to_try = [LocalClient.NSDIAG_PATH_64, LocalClient.NSDIAG_PATH_32]
+
+        nsdiag: Optional[Path] = None
+        for candidate in paths_to_try:
+            if candidate.is_file():
+                nsdiag = candidate
+                break
+        if nsdiag is None:
+            log.warning("nsdiag.exe not found for tenant fallback")
+            return None
+
+        try:
+            result = subprocess.run(
+                [str(nsdiag), "-f"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if result.returncode != 0:
+                log.warning(
+                    "nsdiag -f failed (exit %d): %s",
+                    result.returncode,
+                    (result.stderr or "").strip(),
+                )
+                return None
+
+            tenant_url = ""
+            gateway = ""
+            config_name = ""
+            for raw_line in result.stdout.splitlines():
+                line = raw_line.strip()
+                if "::" not in line:
+                    continue
+                key, value = line.split("::", 1)
+                key = key.strip().lower()
+                value = LocalClient._strip_trailing_dot(value)
+                if key == "tenant url":
+                    tenant_url = value
+                elif key == "gateway":
+                    gateway = value
+                elif key == "config":
+                    config_name = value
+
+            hostname = tenant_url or LocalClient._extract_tenant_from_gateway(gateway)
+            if not hostname:
+                log.warning("nsdiag -f did not provide tenant hostname")
+                return None
+
+            log.info("Detected tenant from nsdiag -f: %s", hostname)
+            return NsConfigInfo(
+                tenant_hostname=hostname,
+                config_name=config_name,
+                allow_auto_update=False,
+            )
+        except Exception as exc:
+            log.warning("Failed to parse tenant from nsdiag -f: %s", exc)
+            return None
 
     @staticmethod
     def detect_tenant_from_nsconfig(
@@ -130,11 +222,40 @@ class LocalClient:
 
         :param nsconfig_path: Override path to nsconfig.json (for testing).
         :return: NsConfigInfo with tenant_hostname and config_name,
-                 or None if nsconfig.json is missing / unreadable.
+                 or None if detection fails.
         """
         path = nsconfig_path or LocalClient.NSCONFIG_PATH
-        if not path.exists():
+
+        # For default path, try nsdiag fallback when nsconfig is missing,
+        # encrypted, or not readable due to permissions.
+        allow_diag_fallback = nsconfig_path is None
+
+        try:
+            if not path.is_file():
+                if allow_diag_fallback:
+                    if LocalClient.NSCONFIG_ENC_PATH.is_file():
+                        log.warning(
+                            "nsconfig.json unavailable but nsconfig.enc exists "
+                            "— falling back to nsdiag -f"
+                        )
+                    else:
+                        log.warning(
+                            "nsconfig.json not found at %s — falling back to "
+                            "nsdiag -f",
+                            path,
+                        )
+                    return LocalClient.detect_tenant_from_nsdiag()
+                return None
+        except PermissionError as exc:
+            if allow_diag_fallback:
+                log.warning(
+                    "No permission to access nsconfig folder (%s) — "
+                    "falling back to nsdiag -f",
+                    exc,
+                )
+                return LocalClient.detect_tenant_from_nsdiag()
             return None
+
         try:
             with open(path, "r", encoding="utf-8") as f:
                 config = json.load(f)
@@ -160,7 +281,24 @@ class LocalClient:
                 config_name=config_name,
                 allow_auto_update=allow_auto_update,
             )
+        except PermissionError as exc:
+            if allow_diag_fallback:
+                log.warning(
+                    "Cannot read nsconfig.json (permission denied: %s) — "
+                    "falling back to nsdiag -f",
+                    exc,
+                )
+                return LocalClient.detect_tenant_from_nsdiag()
+            log.warning("Failed to read nsconfig.json: %s", exc)
+            return None
         except Exception as exc:
+            if allow_diag_fallback:
+                log.warning(
+                    "Failed to read nsconfig.json: %s — "
+                    "falling back to nsdiag -f",
+                    exc,
+                )
+                return LocalClient.detect_tenant_from_nsdiag()
             log.warning("Failed to read nsconfig.json: %s", exc)
             return None
 
@@ -1149,6 +1287,11 @@ class LocalClient:
         :raises RuntimeError: If file read/write fails.
         """
         path = nsconfig_path or LocalClient.NSCONFIG_PATH
+        if nsconfig_path is None and LocalClient.NSCONFIG_ENC_PATH.is_file() and not path.is_file():
+            raise RuntimeError(
+                "nsconfig.json is unavailable (nsconfig.enc exists); "
+                "cannot update simulation cache"
+            )
         if not path.is_file():
             raise RuntimeError(f"nsconfig.json not found: {path}")
 
@@ -1178,6 +1321,34 @@ class LocalClient:
             raise RuntimeError(
                 f"Failed to update nsconfig cache simulation fields: {exc}"
             ) from exc
+
+    @staticmethod
+    def try_set_upgrade_nsconfig_cache(
+        last_client_updated: str = "1",
+        new_client_ver: str = "137.0.0.2222",
+        nsconfig_path: Optional[Path] = None,
+    ) -> bool:
+        """
+        Best-effort wrapper for simulation cache updates.
+
+        Returns False (without raising) when nsconfig cannot be read/written,
+        including encrypted or permission-restricted environments.
+
+        :return: True if updated, False if skipped.
+        """
+        try:
+            LocalClient.set_upgrade_nsconfig_cache(
+                last_client_updated=last_client_updated,
+                new_client_ver=new_client_ver,
+                nsconfig_path=nsconfig_path,
+            )
+            return True
+        except Exception as exc:
+            log.warning(
+                "Skipping nsconfig simulation cache update: %s",
+                exc,
+            )
+            return False
 
     @staticmethod
     def ensure_non_watchdog_monitor_service(

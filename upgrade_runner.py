@@ -760,10 +760,15 @@ class UpgradeRunner:
                 try:
                     if self._simulate_upgrade:
                         LocalClient.set_upgrade_in_progress(1)
-                        LocalClient.set_upgrade_nsconfig_cache(
+                        cache_updated = LocalClient.try_set_upgrade_nsconfig_cache(
                             last_client_updated="1",
                             new_client_ver="137.0.0.2222",
                         )
+                        if not cache_updated:
+                            log.info(
+                                "--simulate: nsconfig cache update skipped "
+                                "(encrypted or no read/write permission)"
+                            )
                         if not self._watchdog_mode:
                             LocalClient.ensure_non_watchdog_monitor_service(
                                 is_64_bit=self.source_64_bit,
