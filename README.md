@@ -193,7 +193,7 @@ actions immediately before executing the local upgrade MSI:
 
 #### Upgrade with timing monitor
 
-Monitor 14 upgrade lifecycle events in a background thread while the
+Monitor 13 upgrade lifecycle events in a background thread while the
 upgrade runs. Optionally trigger a reboot at a specific timing:
 
 ```bash
@@ -204,7 +204,7 @@ python main.py upgrade --target latest --source-64bit --target-64bit --reboottim
 python main.py upgrade --target latest --source-64bit --reboottime 6 --rebootdelay 5
 ```
 
-The 14 monitored timings:
+The 13 monitored timings:
 
 | # | Event |
 |---|-------|
@@ -214,14 +214,13 @@ The 14 monitored timings:
 | 4 | MSIExec process start with argument /i or /I |
 | 5 | nsInstallation.log created/updated |
 | 6 | stAgentUI.exe is gone |
-| 7 | stAgentSvc service stopped/stop_pending |
-| 8 | stAgentSvc.exe process gone |
+| 7 | stAgentSvc service stop_pending |
+| 8 | stAgentSvc stopped / stop_pending / gone |
 | 9 | stadrv service stopped/gone |
-| 10 | stAgentSvc service stopped (after process exit) |
-| 11 | stAgentSvc service removed from SCM |
-| 12 | New stAgentSvc.exe in target install dir |
-| 13 | stAgentSvc.exe running with new PID |
-| 14 | stAgentSvcMon.exe stopped & upgraded |
+| 10 | stAgentSvc service removed from SCM |
+| 11 | New stAgentSvc.exe in target install dir |
+| 12 | stAgentSvc.exe running with new PID |
+| 13 | stAgentSvcMon.exe stopped & upgraded |
 
 > **Note:** Timing 3 never fires in watchdog mode — the tool detects this
 > and automatically skips `--reboottime 3` tests with a PASS result.
@@ -495,7 +494,7 @@ so the same email always gets the same profile across runs.
 | `--source-64bit` | Source (base) install is 64-bit |
 | `--target-64bit` | Upgrade target is 64-bit |
 | `--email` | Send enrollment email invite before upgrade |
-| `--reboottime N` | Timing number (1-14) that triggers a reboot during upgrade |
+| `--reboottime N` | Timing number (1-13) that triggers a reboot during upgrade |
 | `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
 | `--simulate` | Local-target only (`--target local`): set `HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress` DWORD=1 and update `nsconfig.json` cache (`lastClientUpdated=\"1\"`, `newClientVer=\"137.0.0.2222\"`) before local MSI install |
 

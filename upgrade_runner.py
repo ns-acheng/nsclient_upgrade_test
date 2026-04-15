@@ -100,7 +100,7 @@ class UpgradeRunner:
         :param email: User email for WebUI verification.
         :param source_64_bit: Whether the base (source) install is 64-bit.
         :param target_64_bit: Whether the upgrade target is 64-bit.
-        :param reboot_time: Timing number (1-14) that triggers a reboot.
+        :param reboot_time: Timing number (1-13) that triggers a reboot.
         :param reboot_delay: Seconds before reboot after timing fires.
         :param reboot_action: Action at reboot timing (2=kill monitor+reboot,
                               3=kill monitor+msiexec+reboot). None=default reboot.
@@ -1202,7 +1202,7 @@ class UpgradeRunner:
         Timing 3 (stAgentSvcMon.exe -monitor starts) never fires in watchdog
         mode — the monitor process lifecycle is managed differently.
         """
-        if self.reboot_time in (3, 14) and self._watchdog_mode:
+        if self.reboot_time in (3, 13) and self._watchdog_mode:
             label = (
                 "stAgentSvcMon.exe -monitor"
                 if self.reboot_time == 3

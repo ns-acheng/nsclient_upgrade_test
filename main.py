@@ -136,8 +136,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--reboottime", type=int, default=None,
-        choices=range(1, 15), metavar="N",
-        help="Timing number (1-14) that triggers a reboot during upgrade",
+        choices=range(1, 14), metavar="N",
+        help="Timing number (1-13) that triggers a reboot during upgrade",
     )
     upgrade_parser.add_argument(
         "--rebootdelay", type=int, default=5,
