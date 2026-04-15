@@ -23,6 +23,10 @@ from typing import Any, Optional
 log = logging.getLogger(__name__)
 
 
+_SEEN_DUMP_SIGNATURES: set[tuple[str, int, int]] = set()
+_SEEN_DUMP_LOCK = threading.Lock()
+
+
 class UninstallCriticalError(RuntimeError):
     """Raised when msiexec /x fails with a critical error (e.g. 1603)."""
 
@@ -1354,7 +1358,21 @@ class LocalClient:
                         except OSError:
                             pass
                         continue
-                    log.error("CRASH DUMP DETECTED: %s (Size: %d)", f, size)
+
+                    mtime = int(os.path.getmtime(f))
+                    signature = (str(f).lower(), int(size), mtime)
+                    first_seen = False
+                    with _SEEN_DUMP_LOCK:
+                        if signature not in _SEEN_DUMP_SIGNATURES:
+                            _SEEN_DUMP_SIGNATURES.add(signature)
+                            first_seen = True
+
+                    if first_seen:
+                        log.error(
+                            "CRASH DUMP DETECTED: %s (Size: %d)",
+                            f,
+                            size,
+                        )
                     found = True
                 except Exception as exc:
                     log.error("Error checking dump file %s: %s", f, exc)
@@ -1585,6 +1603,11 @@ class CrashMonitor:
                                 log.debug(
                                     "Crash monitor: on_crash callback failed: %s", exc,
                                 )
+
+                        # Stop polling after first confirmed crash to avoid
+                        # duplicate detections while the main flow is
+                        # collecting failure logs.
+                        self._stop_event.set()
             except Exception as exc:
                 log.debug("Crash monitor: check failed: %s", exc)
 
