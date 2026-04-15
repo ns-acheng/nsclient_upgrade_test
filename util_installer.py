@@ -24,7 +24,7 @@ from util_webui import WebUIClient
 BASE_VERSION_DIR = Path(__file__).parent / "data" / "base_version"
 INSTALLER_JSON = Path(__file__).parent / "data" / "installer.json"
 UPGRADE_VERSION_DIR = Path(__file__).parent / "data" / "upgrade_version"
-CLEANUP_BAT_PATH = Path(__file__).parent / "tool" / "cleanup.bat"
+CLEANUP_SCRIPT_PATH = Path(__file__).parent / "tool" / "cleanup.ps1"
 
 log = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ class InstallerManager:
             needs_uninstall = True
         else:
             log.info("No existing installation found")
-            self._run_cleanup_batch()
+            self._run_cleanup_script()
 
         if needs_uninstall:
             _start_email_thread()
@@ -271,28 +271,35 @@ class InstallerManager:
                 "after installation"
             )
 
-    def _run_cleanup_batch(self) -> None:
+    def _run_cleanup_script(self) -> None:
         """
         Best-effort environment cleanup when no client is detected.
 
-        Runs ``tool/cleanup.bat`` to remove stale services/files that may
+        Runs ``tool/cleanup.ps1`` to remove stale services/files that may
         have been left from previous test runs. Failures are logged but do
         not abort installation.
         """
-        if not CLEANUP_BAT_PATH.is_file():
+        if not CLEANUP_SCRIPT_PATH.is_file():
             log.warning(
                 "Cleanup script not found: %s",
-                CLEANUP_BAT_PATH,
+                CLEANUP_SCRIPT_PATH,
             )
             return
 
         log.info(
             "No client detected — running cleanup script: %s",
-            CLEANUP_BAT_PATH,
+            CLEANUP_SCRIPT_PATH,
         )
         try:
             result = subprocess.run(
-                ["cmd.exe", "/c", str(CLEANUP_BAT_PATH)],
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(CLEANUP_SCRIPT_PATH),
+                ],
                 capture_output=True,
                 text=True,
                 timeout=180,
