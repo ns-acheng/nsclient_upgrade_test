@@ -29,6 +29,9 @@ CLEANUP_SCRIPT_PATH = Path(__file__).parent / "tool" / "cleanup.ps1"
 log = logging.getLogger(__name__)
 
 
+EMAIL_FETCH_MAX_RETRIES = 2
+
+
 def resolve_email_profile(
     email: str,
     email_profiles: dict[str, str],
@@ -360,37 +363,75 @@ class InstallerManager:
             stop_event=self.stop_event,
             profile_dir=profile_dir,
         )
-        self._gmail_browser.connect()
 
-        # Phase 1: Clear old unread emails and capture baseline
-        try:
-            self._gmail_browser.mark_all_as_read()
-        except Exception:
-            log.warning(
-                "mark_all_as_read failed — continuing with "
-                "baseline count",
-                exc_info=True,
-            )
-        baseline = self._gmail_browser.count_unread_emails()
+        invite_sent = False
 
-        log.info("Sending email invite to %s", invite_email)
-        self.webui.send_email_invite(invite_email)
+        for attempt in range(EMAIL_FETCH_MAX_RETRIES + 1):
+            try:
+                if attempt == 0:
+                    self._gmail_browser.connect()
+                else:
+                    log.warning(
+                        "Gmail browser session dropped — restarting "
+                        "browser and retrying (%d/%d)",
+                        attempt,
+                        EMAIL_FETCH_MAX_RETRIES,
+                    )
+                    self._gmail_browser.restart()
 
-        # Phase 2: Poll until new unread email arrives (cheap)
-        if not self._gmail_browser.wait_for_new_unread(
-            baseline=baseline, timeout=30,
-        ):
-            log.warning(
-                "Polling did not detect new email "
-                "— proceeding to search (may be threaded)"
-            )
+                if not invite_sent:
+                    try:
+                        self._gmail_browser.mark_all_as_read()
+                    except Exception:
+                        log.warning(
+                            "mark_all_as_read failed — continuing with "
+                            "baseline count",
+                            exc_info=True,
+                        )
 
-        # Phase 3: Open the newest email and extract link
-        url = self._gmail_browser.get_download_link(
-            timeout=60, max_rows=1,
+                    baseline = self._gmail_browser.count_unread_emails()
+
+                    log.info("Sending email invite to %s", invite_email)
+                    self.webui.send_email_invite(invite_email)
+                    invite_sent = True
+
+                    if not self._gmail_browser.wait_for_new_unread(
+                        baseline=baseline,
+                        timeout=30,
+                    ):
+                        log.warning(
+                            "Polling did not detect new email "
+                            "— proceeding to search (may be threaded)"
+                        )
+                else:
+                    log.info(
+                        "Browser restarted after invite was already "
+                        "sent — searching Gmail again without "
+                        "re-sending invite"
+                    )
+
+                url = self._gmail_browser.get_download_link(
+                    timeout=60,
+                    max_rows=1,
+                )
+                log.info("Auto-extracted download link: %s", url)
+                return url
+            except Exception as exc:
+                if (
+                    not GmailBrowser.is_retryable_disconnect(exc)
+                    or attempt >= EMAIL_FETCH_MAX_RETRIES
+                ):
+                    raise
+
+                log.warning(
+                    "Recoverable Gmail browser disconnect while "
+                    "fetching invite link: %s",
+                    exc,
+                )
+
+        raise RuntimeError(
+            "Email invite flow exhausted browser restart retries"
         )
-        log.info("Auto-extracted download link: %s", url)
-        return url
 
     def _close_gmail_browser(self) -> None:
         """Close the Gmail browser session if one is open."""

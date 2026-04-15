@@ -40,6 +40,16 @@ CHROME_PATHS = [
 log = logging.getLogger(__name__)
 
 
+RETRYABLE_BROWSER_ERROR_SNIPPETS = (
+    "invalid session id",
+    "session deleted as the browser has closed the connection",
+    "unable to receive message from renderer",
+    "disconnected",
+    "target window already closed",
+    "chrome not reachable",
+)
+
+
 class GmailBrowser:
     """
     Attaches to a running Chrome instance and extracts a Netskope
@@ -773,6 +783,38 @@ class GmailBrowser:
                     )
                 except Exception:
                     pass
+
+    def restart(self) -> None:
+        """Force-close the current Chrome session and reconnect."""
+        log.info("Restarting Gmail browser on port %d", self._debug_port)
+        self._close_chrome_via_cdp()
+        self.connect()
+
+    @staticmethod
+    def is_retryable_disconnect(exc: Exception) -> bool:
+        """Return True for transient browser/session disconnect errors."""
+        message = str(exc).lower()
+
+        try:
+            from selenium.common.exceptions import (
+                InvalidSessionIdException,
+                WebDriverException,
+            )
+
+            if isinstance(exc, InvalidSessionIdException):
+                return True
+            if isinstance(exc, WebDriverException):
+                return any(
+                    snippet in message
+                    for snippet in RETRYABLE_BROWSER_ERROR_SNIPPETS
+                )
+        except Exception:
+            pass
+
+        return any(
+            snippet in message
+            for snippet in RETRYABLE_BROWSER_ERROR_SNIPPETS
+        )
 
     # -- helpers --------------------------------------------------------
 
