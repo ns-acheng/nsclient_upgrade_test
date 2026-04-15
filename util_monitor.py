@@ -469,9 +469,8 @@ class TimingMonitor:
 
         The upgrade lifecycle is: old service stops → files replaced →
         new service starts with a different PID.  This method waits
-    Background daemon thread that detects and timestamps 13 upgrade
-        and come back up, rather than accepting the still-running old
-        service as "complete."
+        for those conditions and come back up, rather than accepting the
+        still-running old service as "complete."
 
         When timing 3 (monitor process starts) or timing 5
         (nsInstallation.log updated) is detected, the deadline is
@@ -479,10 +478,8 @@ class TimingMonitor:
         time to finish once it has actually started.
 
         :param timeout: Max seconds to wait for upgrade completion.
-        :param settle_time: Extra seconds after upgrade is confirmed
-            8: self._detect_service_stopped_or_gone,
-        :param extend_timeout: Seconds to extend the deadline when
-            10: self._detect_service_gone,
+        :param settle_time: Extra seconds after upgrade is confirmed before returning.
+        :param extend_timeout: Seconds to extend the deadline when upgrade activity detected.
         :return: True if upgrade completed, False on timeout.
         """
         wait_time = timeout if timeout is not None else self._timeout
@@ -490,11 +487,8 @@ class TimingMonitor:
         svc_went_down = False
         deadline_extended = False
 
-        # never fire, so remove it from the detector map.
+        while time.time() < self._deadline:
             if self._all_detected.is_set():
-            self._detectors.pop(13, None)
-                return True
-                "Watchdog mode: skipping timing 13 "
             # ── Timing 1 fast-path reboot ────────────────────────
             # Timing 1 fires during config sync right after the MSI
             # install.  When reboot_time == 1 (and not standby), prepare
