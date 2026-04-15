@@ -4,6 +4,8 @@ CLI tool for testing Netskope Client auto-upgrade scenarios. It orchestrates
 upgrade workflows by coordinating between a tenant's WebUI API and the local
 Netskope Client installation.
 
+Primary workflow: run upgrade scenarios with `python main.py upgrade --target ...`.
+
 ## Requirements
 
 - Python 3.10+
@@ -35,7 +37,29 @@ mocked.
 
 ## Usage
 
-### First-Time Setup
+### Primary Workflow (Upgrade)
+
+Use `upgrade` for the main test flow:
+
+```bash
+# Most common
+python main.py upgrade --target latest
+
+# Golden channel
+python main.py upgrade --target golden
+
+# Golden + dot release
+python main.py upgrade --target golden-dot --email user@example.com
+
+# Local MSI upgrade
+python main.py upgrade --target local --simulate --email user@example.com
+```
+
+All upgrade scenarios and options are documented below in **Run Upgrade Scenarios**.
+
+### Other Commands (Lower Priority)
+
+#### First-Time Setup
 
 Save your tenant hostname, admin username, and encrypted password to
 `data/`. The password is encrypted with a local key and stored in
@@ -49,7 +73,7 @@ python main.py setup
 On subsequent runs the saved password is used automatically. If the password
 is wrong, you will be prompted up to 3 times before the tool aborts.
 
-### List Available Versions
+#### List Available Versions
 
 Query the tenant for all available client release versions:
 
@@ -57,7 +81,7 @@ Query the tenant for all available client release versions:
 python main.py versions
 ```
 
-### Check Local Client Status
+#### Check Local Client Status
 
 Show the currently installed client version and status (requires `nsclient`):
 

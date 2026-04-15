@@ -60,7 +60,21 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser with subcommands."""
     parser = argparse.ArgumentParser(
         prog="nsclient_upgrade",
-        description="Netskope Client Auto-Upgrade Tool",
+        description=(
+            "Netskope Client Auto-Upgrade Tool\n"
+            "Primary usage: nsclient_upgrade upgrade --target latest [--email <addr>]"
+        ),
+        epilog=(
+            "Examples:\n"
+            "  nsclient_upgrade upgrade --target latest\n"
+            "  nsclient_upgrade upgrade --target golden\n"
+            "  nsclient_upgrade upgrade --target golden-dot --email acheng@netskope.com\n"
+            "  nsclient_upgrade setup\n"
+            "  nsclient_upgrade versions\n"
+            "  nsclient_upgrade status\n"
+            "  nsclient_upgrade disable-upgrade"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
     )
 
     # Global options
@@ -85,24 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable debug logging",
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    # ── setup ────────────────────────────────────────────────────
-    subparsers.add_parser(
-        "setup",
-        help="Save tenant hostname and username to config (password is never saved)",
-    )
-
-    # ── versions ─────────────────────────────────────────────────
-    subparsers.add_parser(
-        "versions",
-        help="List available client release versions from the tenant",
-    )
-
-    # ── status ───────────────────────────────────────────────────
-    subparsers.add_parser(
-        "status",
-        help="Show current local client version and status",
+    subparsers = parser.add_subparsers(
+        dest="command",
+        help="Commands (upgrade is the primary workflow)",
     )
 
     # ── upgrade ──────────────────────────────────────────────────
@@ -209,6 +208,24 @@ def build_parser() -> argparse.ArgumentParser:
     continue_parser.add_argument(
         "--result-file", dest="result_file", default=None,
         help="Write JSON result to this path (used by batch runner)",
+    )
+
+    # ── setup ────────────────────────────────────────────────────
+    subparsers.add_parser(
+        "setup",
+        help="Save tenant hostname and username to config (password is never saved)",
+    )
+
+    # ── versions ─────────────────────────────────────────────────
+    subparsers.add_parser(
+        "versions",
+        help="List available client release versions from the tenant",
+    )
+
+    # ── status ───────────────────────────────────────────────────
+    subparsers.add_parser(
+        "status",
+        help="Show current local client version and status",
     )
 
     return parser
