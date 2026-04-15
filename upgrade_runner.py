@@ -302,7 +302,7 @@ class UpgradeRunner:
 
         except Exception as exc:
             elapsed = time.time() - start_time
-            log.exception("Scenario %s failed with exception", scenario)
+            log.error("Scenario %s failed with exception: %s", scenario, exc)
             self._collect_failure_logs()
             return UpgradeResult(
                 success=False,
@@ -495,7 +495,7 @@ class UpgradeRunner:
 
         except Exception as exc:
             elapsed = time.time() - start_time
-            log.exception("Scenario %s failed with exception", scenario)
+            log.error("Scenario %s failed with exception: %s", scenario, exc)
             self._collect_failure_logs()
             return UpgradeResult(
                 success=False,
@@ -639,7 +639,7 @@ class UpgradeRunner:
 
         except Exception as exc:
             elapsed = time.time() - start_time
-            log.exception("Scenario %s failed with exception", scenario)
+            log.error("Scenario %s failed with exception: %s", scenario, exc)
             self._collect_failure_logs()
             return UpgradeResult(
                 success=False,
@@ -892,7 +892,7 @@ class UpgradeRunner:
 
         except Exception as exc:
             elapsed = time.time() - start_time
-            log.exception("Scenario %s failed with exception", scenario)
+            log.error("Scenario %s failed with exception: %s", scenario, exc)
             self._collect_failure_logs_local()
             return UpgradeResult(
                 success=False,
