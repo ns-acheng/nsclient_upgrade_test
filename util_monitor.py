@@ -486,9 +486,9 @@ class TimingMonitor:
         initial_pid = self._state.initial_svc_pid
         svc_went_down = False
         deadline_extended = False
+        deadline = time.time() + wait_time
 
-        while time.time() < self._deadline:
-            if self._all_detected.is_set():
+        while time.time() < deadline:
             # ── Timing 1 fast-path reboot ────────────────────────
             # Timing 1 fires during config sync right after the MSI
             # install.  When reboot_time == 1 (and not standby), prepare
