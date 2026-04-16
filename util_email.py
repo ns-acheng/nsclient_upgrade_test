@@ -390,7 +390,6 @@ class GmailBrowser:
     def wait_for_new_matching_email(
         self,
         baseline: int = 0,
-        timeout: int = DEFAULT_TIMEOUT,
     ) -> bool:
         """
         Wait until the count of matching invite emails increases.
@@ -410,15 +409,13 @@ class GmailBrowser:
         from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._driver
-        deadline = time.monotonic() + timeout
 
         log.info(
-            "Polling matching invite emails (baseline=%d, timeout=%ds)",
+            "Polling matching invite emails (baseline=%d, max 10 attempts, 3s interval)",
             baseline,
-            timeout,
         )
 
-        while time.monotonic() < deadline:
+        for attempt in range(1, 11):
             if self._stop_event and self._stop_event.is_set():
                 log.warning("Stop event — aborting matching email wait")
                 return False
@@ -427,7 +424,7 @@ class GmailBrowser:
             try:
                 driver.get(self._gmail_start_url())
             except TimeoutException:
-                time.sleep(SEARCH_RETRY_INTERVAL)
+                time.sleep(3)
                 continue
 
             self._dismiss_overlays(driver, By)
@@ -442,26 +439,23 @@ class GmailBrowser:
 
             if count > baseline:
                 log.info(
-                    "New matching invite email detected (%d > %d)",
+                    "New matching invite email detected (%d > %d) on attempt %d",
                     count,
                     baseline,
+                    attempt,
                 )
                 return True
 
-            remaining = deadline - time.monotonic()
             log.info(
-                "No new matching email yet (%d, baseline %d) — "
-                "polling in %ds (%.0fs left)",
+                "No new matching email yet (%d, baseline %d) — attempt %d/10",
                 count,
                 baseline,
-                SEARCH_RETRY_INTERVAL,
-                remaining,
+                attempt,
             )
-            time.sleep(SEARCH_RETRY_INTERVAL)
+            time.sleep(3)
 
         log.warning(
-            "Timed out waiting for new matching invite email after %ds",
-            timeout,
+            "No new matching email after 10 attempts",
         )
         return False
 

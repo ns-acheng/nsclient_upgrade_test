@@ -393,7 +393,6 @@ class InstallerManager:
 
                     if not self._gmail_browser.wait_for_new_matching_email(
                         baseline=baseline,
-                        timeout=30,
                     ):
                         log.warning(
                             "Polling did not detect a new matching email "
@@ -487,11 +486,11 @@ class InstallerManager:
         self.webui.send_email_invite(invite_email)
 
         if not self._gmail_browser.wait_for_new_matching_email(
-            baseline=baseline, timeout=60,
+            baseline=baseline,
         ):
             raise RuntimeError(
                 "Install failed (1603) — no fresh matching email "
-                "arrived within 60s after re-send"
+                "after 10 polling attempts"
             )
 
         url = self._gmail_browser.get_download_link(
