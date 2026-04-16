@@ -757,6 +757,7 @@ class UpgradeRunner:
             install_done = threading.Event()
 
             def _install_worker() -> None:
+                log.info("Local upgrade install worker entered")
                 try:
                     if self._simulate_upgrade:
                         LocalClient.set_upgrade_in_progress(1)
@@ -797,12 +798,14 @@ class UpgradeRunner:
 
                     sta_update_log = install_log_dir / "STAUpdate.txt"
                     log.info("Upgrade MSI verbose log path: %s", sta_update_log)
+                    log.info("Calling install_local_upgrade_msi now")
                     self.client.install_local_upgrade_msi(
                         str(upgrade_installer),
                         sta_update_log,
                     )
                 except Exception as exc:
                     install_error[0] = exc
+                    log.exception("Local upgrade install worker failed: %s", exc)
                 finally:
                     install_done.set()
 
@@ -819,6 +822,16 @@ class UpgradeRunner:
                 "Upgrade MSI install started — monitor and install "
                 "running concurrently"
             )
+
+            # Fail fast if install thread exits immediately with an error
+            # (e.g. non-admin, missing MSI, msiexec launch failure).
+            if install_done.wait(timeout=2):
+                early_exc = install_error[0]
+                if early_exc is not None and not monitor.state.reboot_triggered:
+                    raise RuntimeError(
+                        f"Upgrade MSI install failed before monitor wait: "
+                        f"{early_exc}"
+                    ) from early_exc
 
             # Wait for new stAgentSvc version running; settle for 10 s
             completed = monitor.wait_for_upgrade_complete(

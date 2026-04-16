@@ -1454,10 +1454,19 @@ class LocalClient:
         :raises RuntimeError: If not admin or msiexec fails.
         """
         if not LocalClient._is_admin():
+            log.error(
+                "Local upgrade msiexec not started: administrator privileges "
+                "are required"
+            )
             raise RuntimeError(
                 "msiexec /qn requires administrator privileges. "
                 "Re-run the script as Administrator."
             )
+
+        msi_path = Path(setup_file_path)
+        if not msi_path.is_file():
+            log.error("Local upgrade MSI not found: %s", msi_path)
+            raise FileNotFoundError(f"Local upgrade MSI not found: {msi_path}")
 
         sta_update_log_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
