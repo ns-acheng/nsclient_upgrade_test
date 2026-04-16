@@ -4,6 +4,7 @@ Each public method implements a complete upgrade scenario end-to-end.
 """
 
 import logging
+import os
 import socket
 import threading
 import time
@@ -785,11 +786,40 @@ class UpgradeRunner:
                                     is_64_bit=self.source_64_bit,
                                 )
                             except Exception as exc:
-                                log.warning(
-                                    "--simulate: monitor-service prep failed; "
-                                    "skipping (%s)",
-                                    exc,
+                                # Only skip when the Netskope install folder
+                                # itself is inaccessible (e.g. rollback/protected
+                                # stage). Otherwise treat as a real failure.
+                                install_dir = LocalClient.get_install_dir(
+                                    self.source_64_bit
                                 )
+                                inaccessible = False
+                                access_note = ""
+                                try:
+                                    if not install_dir.exists():
+                                        inaccessible = True
+                                        access_note = "folder not found"
+                                    else:
+                                        if not os.access(install_dir, os.R_OK | os.X_OK):
+                                            inaccessible = True
+                                            access_note = "no read/execute access"
+                                        else:
+                                            # Force a directory read to catch
+                                            # permission/runtime access errors.
+                                            list(install_dir.iterdir())
+                                except Exception as access_exc:
+                                    inaccessible = True
+                                    access_note = str(access_exc)
+
+                                if inaccessible:
+                                    log.warning(
+                                        "--simulate: monitor-service prep skipped "
+                                        "because Netskope install folder is "
+                                        "inaccessible (%s): %s",
+                                        install_dir,
+                                        access_note,
+                                    )
+                                else:
+                                    raise
                         else:
                             log.info(
                                 "--simulate monitor-service clone skipped in "
