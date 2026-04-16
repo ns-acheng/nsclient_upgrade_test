@@ -17,7 +17,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 GMAIL_URL = "https://mail.google.com/"
 DEFAULT_DEBUG_PORT = 9222
@@ -175,7 +175,7 @@ class GmailBrowser:
         driver = self._driver
         if "mail.google.com" not in (driver.current_url or ""):
             log.info("Navigating to Gmail")
-            driver.get(GMAIL_URL)
+            driver.get(self._gmail_start_url())
 
         self._dismiss_overlays(driver, By)
 
@@ -306,7 +306,7 @@ class GmailBrowser:
 
             # Navigate to inbox to get fresh DOM
             try:
-                driver.get(GMAIL_URL)
+                driver.get(self._gmail_start_url())
             except TimeoutException:
                 remaining = deadline - time.monotonic()
                 log.warning(
@@ -426,7 +426,7 @@ class GmailBrowser:
 
             if "mail.google.com" not in (driver.current_url or ""):
                 try:
-                    driver.get(GMAIL_URL)
+                    driver.get(self._gmail_start_url())
                 except TimeoutException:
                     time.sleep(SEARCH_RETRY_INTERVAL)
                     continue
@@ -490,7 +490,7 @@ class GmailBrowser:
         driver = self._driver
 
         if "mail.google.com" not in (driver.current_url or ""):
-            driver.get(GMAIL_URL)
+            driver.get(self._gmail_start_url())
 
         self._dismiss_overlays(driver, By)
 
@@ -538,7 +538,7 @@ class GmailBrowser:
 
         if "mail.google.com" not in (driver.current_url or ""):
             log.info("Navigating to Gmail")
-            driver.get(GMAIL_URL)
+            driver.get(self._gmail_start_url())
 
         self._dismiss_overlays(driver, By)
 
@@ -601,7 +601,7 @@ class GmailBrowser:
             # Step 1: Navigate to Gmail
             if "mail.google.com" not in (driver.current_url or ""):
                 log.info("Navigating to Gmail")
-                driver.get(GMAIL_URL)
+                driver.get(self._gmail_start_url())
 
             # Dismiss notification prompts that block clicks
             self._dismiss_overlays(driver, By)
@@ -1048,7 +1048,7 @@ class GmailBrowser:
         from selenium.webdriver.support.ui import WebDriverWait
 
         try:
-            self._driver.get(GMAIL_URL)
+            self._driver.get(self._gmail_start_url())
             self._find_search_box(
                 self._driver,
                 By,
@@ -1059,6 +1059,15 @@ class GmailBrowser:
             return True
         except Exception:
             return False
+
+    def _gmail_start_url(self) -> str:
+        """Return Gmail start URL, preferring label deep-link when configured."""
+        if SEARCH_LABEL:
+            return (
+                "https://mail.google.com/mail/u/0/?pli=1#label/"
+                f"{quote_plus(SEARCH_LABEL)}"
+            )
+        return GMAIL_URL
 
     def _close_chrome_via_cdp(self) -> None:
         """Close Chrome via DevTools Protocol and disconnect WebDriver."""
@@ -1089,12 +1098,13 @@ class GmailBrowser:
             )
 
         self._profile_dir.mkdir(parents=True, exist_ok=True)
+        start_url = self._gmail_start_url()
         cmd = (
             f'start "" "{chrome_exe}"'
             f' --user-data-dir="{self._profile_dir}"'
             f" --remote-debugging-port={self._debug_port}"
             " --remote-allow-origins=*"
-            f' "{GMAIL_URL}"'
+            f' "{start_url}"'
         )
         log.info("Launching Chrome: %s", cmd)
         subprocess.Popen(f"cmd /c {cmd}", shell=True)
