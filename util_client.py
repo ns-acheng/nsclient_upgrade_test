@@ -892,26 +892,40 @@ class LocalClient:
         Check if the client is in watchdog mode by reading
         ``nsclient_watchdog_monitor`` from nsconfig.json.
 
+        If nsconfig.json is unavailable, check for the stAgentSvcMon.exe
+        watchdog monitor executable (indicates watchdog mode).
+
         :param nsconfig_path: Override path (for testing).
         :return: True if watchdog monitor is enabled.
         """
         path = nsconfig_path or LocalClient.NSCONFIG_PATH
-        if not path.is_file():
-            log.warning("is_watchdog_mode: %s not found", path)
-            return False
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            raw = config.get("clientConfig", {}).get("nsclient_watchdog_monitor")
-            result = str(raw).lower() == "true" if raw is not None else False
-            log.info(
-                "is_watchdog_mode: read %s — clientConfig.nsclient_watchdog_monitor=%r → %s",
-                path, raw, result,
-            )
-            return result
-        except Exception as exc:
-            log.warning("Failed to read watchdog mode from nsconfig: %s", exc)
-            return False
+        if path.is_file():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                raw = config.get("clientConfig", {}).get("nsclient_watchdog_monitor")
+                result = str(raw).lower() == "true" if raw is not None else False
+                log.info(
+                    "is_watchdog_mode: read %s — clientConfig.nsclient_watchdog_monitor=%r → %s",
+                    path, raw, result,
+                )
+                return result
+            except Exception as exc:
+                log.warning("Failed to read watchdog mode from nsconfig: %s", exc)
+                return False
+
+        # nsconfig.json not found; check for stAgentSvcMon.exe watchdog executable
+        log.info("is_watchdog_mode: nsconfig.json not found — checking for watchdog executable")
+        for install_dir in [INSTALL_DIR_64, INSTALL_DIR_32]:
+            watchdog_exe = install_dir / WATCHDOG_EXECUTABLE
+            if watchdog_exe.is_file():
+                log.info(
+                    "is_watchdog_mode: watchdog executable found at %s → True",
+                    watchdog_exe,
+                )
+                return True
+        log.info("is_watchdog_mode: no watchdog executable found → False")
+        return False
 
     @staticmethod
     def get_file_version(file_path: Path) -> str:
