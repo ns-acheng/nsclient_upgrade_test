@@ -124,6 +124,32 @@ def _is_stopped_by_user_failure(message: str) -> bool:
     return "stopped by user" in msg
 
 
+def _is_unknown_version_before_failure(test: TestRun) -> bool:
+    """
+    Return True when a failed test never reached upgrade validation.
+
+    This uses version_before markers that indicate setup/install phase
+    failure before we can collect a meaningful source version.
+    """
+    return (
+        test.status == "fail"
+        and test.version_before in ("", "unknown", "N/A")
+    )
+
+
+def _mark_test_pending_for_retake(test: TestRun, message: str) -> None:
+    """Reset result fields and mark a test pending for later retry."""
+    test.status = "pending"
+    test.critical_failure = False
+    test.log_dir = ""
+    test.version_before = ""
+    test.version_after = ""
+    test.expected_version = ""
+    test.elapsed_seconds = 0.0
+    test.finished_at = ""
+    test.message = message
+
+
 def _print_test_result(test: TestRun) -> None:
     color = _GREEN if test.status == "pass" else _RED
     elapsed = f"  ({test.elapsed_seconds:.0f}s)" if test.elapsed_seconds else ""
@@ -225,43 +251,41 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
         run_test_subprocess(record.base_args, test, result_file, stop_event)
         save_record(record, record_path)
 
-        # Treat external/non-upgrade dependency failures as deferred pending
-        # and move to next test in this pass.
+        # Treat external/non-upgrade dependency failures (and unknown
+        # version_before failures) as deferred pending and move to next
+        # test in this pass.
         if (
-            test.status == "fail"
-            and (
+            (
                 _is_email_link_related_failure(test.message)
                 or _is_stopped_by_user_failure(test.message)
+                or _is_unknown_version_before_failure(test)
             )
         ):
             if _is_email_link_related_failure(test.message):
                 defer_reason = "email-link extraction failure"
-            else:
+                pending_note = (
+                    "Deferred: email invite/link extraction failed; "
+                    "pending for later retry"
+                )
+            elif _is_stopped_by_user_failure(test.message):
                 defer_reason = "stopped-by-user failure"
+                pending_note = (
+                    "Deferred: stopped by user; "
+                    "pending for later retry"
+                )
+            else:
+                defer_reason = "unknown version_before"
+                pending_note = (
+                    "Deferred: version_before unknown; "
+                    "pending for later retry"
+                )
             log.warning(
                 "[%s] Deferred as pending due to %s",
                 test.id,
                 defer_reason,
             )
-            test.status = "pending"
-            test.critical_failure = False
             # Keep start timestamp as audit trail but clear result payload.
-            test.log_dir = ""
-            test.version_before = ""
-            test.version_after = ""
-            test.expected_version = ""
-            test.elapsed_seconds = 0.0
-            test.finished_at = ""
-            if _is_email_link_related_failure(test.message):
-                test.message = (
-                    "Deferred: email invite/link extraction failed; "
-                    "pending for later retry"
-                )
-            else:
-                test.message = (
-                    "Deferred: stopped by user; "
-                    "pending for later retry"
-                )
+            _mark_test_pending_for_retake(test, pending_note)
             deferred_ids.add(test.id)
             save_record(record, record_path)
             generate_html_report(record, report_path)
@@ -351,6 +375,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.resume:
         record = load_record(record_path)
         if record:
+            auto_reset = 0
+            for test in record.tests:
+                if _is_unknown_version_before_failure(test):
+                    _mark_test_pending_for_retake(
+                        test,
+                        "Deferred: version_before unknown; pending for later retry",
+                    )
+                    auto_reset += 1
+            if auto_reset:
+                save_record(record, record_path)
+                log.info(
+                    "Auto-reset %d unknown-version failure(s) to pending",
+                    auto_reset,
+                )
             log.info(
                 "Resuming batch %s — %d tests total",
                 record.batch_id, len(record.tests),
