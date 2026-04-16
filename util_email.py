@@ -572,7 +572,6 @@ class GmailBrowser:
             TimeoutException,
         )
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
 
@@ -584,28 +583,15 @@ class GmailBrowser:
             if self._stop_event and self._stop_event.is_set():
                 raise TimeoutError("Stopped by user (ESC)")
 
-            # Step 1: Navigate to Gmail
-            if "mail.google.com" not in (driver.current_url or ""):
-                log.info("Navigating to Gmail")
-                driver.get(self._gmail_start_url())
+            # Step 1: Navigate to the label URL — emails are pre-filtered
+            log.info("Navigating to Gmail label")
+            driver.get(self._gmail_start_url())
 
             # Dismiss notification prompts that block clicks
             self._dismiss_overlays(driver, By)
 
-            # Step 2: Wait for search input
-            log.info("Waiting for Gmail search input")
-            search_box = self._find_search_box(
-                driver, By, EC, WebDriverWait,
-            )
-
-            # Step 3: Search for unread emails matching the subject
-            search_query = (
-                self._build_invite_search_query(unread=False)
-            )
-            log.info("Searching Gmail: %s", search_query)
-            self._set_search_query(search_box, search_query, submit=True)
-
-            # Step 4: Wait for results and count rows
+            # Step 2: Wait for email rows to appear
+            log.info("Waiting for email rows")
             try:
                 self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
                 row_count = int(driver.execute_script(
@@ -615,11 +601,11 @@ class GmailBrowser:
             except TimeoutException:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
-                        f"No unread email found within "
+                        f"No email found within "
                         f"{timeout}s: {SEARCH_SUBJECT}"
                     )
                 log.info(
-                    "No matching email yet — retrying in %ds",
+                    "No email rows yet — retrying in %ds",
                     SEARCH_RETRY_INTERVAL,
                 )
                 time.sleep(SEARCH_RETRY_INTERVAL)
