@@ -178,7 +178,7 @@ class WebUIClient:
     def enable_upgrade_latest(
         self,
         search_config: str = "",
-        schedule_minutes: int = 2,
+        schedule_minutes: int = 4,
         target_64_bit: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
@@ -223,7 +223,7 @@ class WebUIClient:
         golden_version: str,
         dot: bool = False,
         search_config: str = "",
-        schedule_minutes: int = 2,
+        schedule_minutes: int = 4,
         target_64_bit: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
