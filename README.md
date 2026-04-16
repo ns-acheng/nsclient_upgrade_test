@@ -498,6 +498,7 @@ so the same email always gets the same profile across runs.
 | `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
 | `--simulate` | Local-target only (`--target local`): set `HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress` DWORD=1 and update `nsconfig.json` cache (`lastClientUpdated=\"1\"`, `newClientVer=\"137.0.0.2222\"`) before local MSI install |
 
+
 ## Unit Tests
 
 Tests are in the `test/` directory and use **pytest** with all I/O mocked. No
@@ -510,61 +511,6 @@ Neither `pylark-webapi-lib` nor `nsclient` need to be installed.
 python -m pytest test/ -v
 ```
 
-### Test Structure
-
-- `test/conftest.py` — Mocks external packages (`nsclient`, `webapi`, `selenium`)
-  so tests run without those dependencies installed.
-- `test/test_main.py` — Tests for CLI command output and login flow:
-  - **cmd_versions** — version display, golden build display, timestamp
-    filtering, connect failure handling
-  - **connect_with_retry** — success on 1st/2nd/3rd attempt, failure after 3
-    attempts, non-auth error propagation, timeout handling, password clearing
-  - **nsclient check** — status and upgrade abort cleanly when nsclient is
-    missing
-- `test/test_upgrade_runner.py` — Tests for the upgrade orchestration logic:
-  - **Upgrade to latest** — success, timeout, cleanup on success, cleanup on
-    exception
-  - **Upgrade to golden** — latest golden (with/without dot), auto-pick of
-    from-version
-  - **Upgrade disabled** — verifies version stays unchanged, detects unexpected
-    upgrades
-  - **WebUI verification** — version mismatch handling, API error resilience
-  - **Prepare client** — uninstall-before-install flow, skip-uninstall when not
-    installed, local installer exact match, 64-bit selection, single-file rename,
-    fallback to download, ambiguous multi-file fallback, missing installer error
-  - **Email auto-extraction** — GmailBrowser integration, fallback to manual
-  - **Timing monitor** — monitor started/stopped when reboot_time is set,
-    skipped when None
-- `test/test_util_monitor.py` — Tests for the upgrade timing monitor:
-  - **TimingEvent** — enum values and descriptions
-  - **MonitorState** — save/load/clear round-trip, corrupt/missing file handling
-  - **Process helpers** — tasklist PID extraction, wmic command line parsing
-  - **Scheduled task** — create/delete continue task
-  - **Detectors** — all 13 timing detectors with mocked subprocess/file state
-  - **Polling loop** — stop event, timeout exit conditions
-  - **Reboot trigger** — state save, task creation, shutdown command
-  - **Report** — formatted output with/without timings, reboot indication
-  - **Resume after reboot** — pre-reboot elapsed offset
-- `test/test_util_email.py` — Tests for Gmail email automation:
-  - **connect** — success, failure, auto-launch Chrome
-  - **get_download_link** — full DOM chain, retry on missing email, timeout
-  - **unwrap redirect** — Google redirect parsing, passthrough
-  - **link text selection** — 64-bit vs 32-bit
-- `test/test_util_client.py` — Tests for local client operations
-- `test/test_util_webui.py` — Tests for WebUI client wrapper:
-  - **Connection** — authentication, page object init, missing webapi error,
-    auth failure, login timeout
-  - **Ensure connected guard** — RuntimeError when not connected
-  - **Release versions** — data extraction, sorted version list
-  - **Client config** — disable/enable upgrade, golden with/without dot
-  - **Device queries** — version lookup
-  - **Email invite** — send invite, guard when not connected
-- `test/test_util_secret.py` — Tests for encrypted password storage:
-  - **Round-trip** — save/load, overwrite, empty, unicode
-  - **Missing data** — no files, missing key, missing password, corrupt data,
-    wrong key
-  - **Clear** — file removal, no-op when absent
-  - **Key generation** — creation and reuse
 
 ### Adding New Tests
 

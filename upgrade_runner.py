@@ -779,9 +779,24 @@ class UpgradeRunner:
                                 "watchdog mode"
                             )
 
-                    sta_update_log = (
-                        (self._log_dir or LOG_DIR) / "STAUpdate.txt"
-                    )
+                    # Always write /l*v+ output to the scenario test folder.
+                    # If for any reason _log_dir is missing, create a
+                    # workspace-local fallback folder under log/.
+                    install_log_dir = self._log_dir
+                    if install_log_dir is None:
+                        fallback_name = datetime.now().strftime(
+                            "upgrade_%Y%m%d_%H%M%S_msi"
+                        )
+                        install_log_dir = LOG_DIR / fallback_name
+                        install_log_dir.mkdir(parents=True, exist_ok=True)
+                        log.warning(
+                            "Scenario log folder missing; using fallback "
+                            "msiexec log dir: %s",
+                            install_log_dir,
+                        )
+
+                    sta_update_log = install_log_dir / "STAUpdate.txt"
+                    log.info("Upgrade MSI verbose log path: %s", sta_update_log)
                     self.client.install_local_upgrade_msi(
                         str(upgrade_installer),
                         sta_update_log,

@@ -19,6 +19,7 @@ Options:
 
 import argparse
 import logging
+import shutil
 import subprocess
 import sys
 import threading
@@ -439,6 +440,56 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fresh(args: argparse.Namespace) -> int:
+    """
+    Clean old batch data by backing up and resetting the record.
+
+    This command backs up the existing record to a fixed backup file,
+    then resets all test statuses to pending (clears results but keeps
+    the file). It also regenerates the HTML report showing all tests
+    as pending and ready to run.
+    """
+    batch_path, record_path = _selected_paths(args.local)
+    report_path = _report_path_for(record_path)
+
+    print("\n" + "=" * 55)
+    print("  Batch Fresh — Backup & Reset")
+    print("=" * 55)
+
+    # Check if record exists and reset it
+    if not record_path.exists():
+        print(f"\n  [OK] {record_path.name} — not found (already clean)")
+        record = _backup_and_reset_record(batch_path, record_path)
+    else:
+        record = load_record(record_path)
+        if record:
+            n_tests = len(record.tests)
+            n_done = sum(1 for t in record.tests if t.status in ("pass", "fail"))
+            print(
+                f"\n  Cleaning {record_path.name}:"
+                f"\n    - Batch ID: {record.batch_id}"
+                f"\n    - Tests: {n_done}/{n_tests} complete"
+            )
+        else:
+            print(f"\n  Cleaning {record_path.name}:")
+            print("    - Existing record is invalid/corrupt; recreating from batch config")
+        record = _backup_and_reset_record(batch_path, record_path)
+
+    # Regenerate the HTML report from the reset record
+    print("\n  Regenerating report...")
+    if record:
+        out = generate_html_report(record, report_path)
+        log.info("Generated clean report: %s", out)
+        print(f"  [OK] Report ready: {report_path.name}")
+    else:
+        print(f"  [SKIP] No record found to generate report")
+
+    print("\n" + "=" * 55)
+    print("  Batch data reset. Ready for fresh run.")
+    print("=" * 55 + "\n")
+    return 0
+
+
 def _parse_iso_timestamp(value: str) -> datetime:
     """Parse ISO timestamp safely; returns datetime.min on failure."""
     if not value:
@@ -575,6 +626,63 @@ def _run_main_continue(result_file: Path) -> None:
         log.warning("main.py continue failed: %s", exc)
 
 
+def _backup_record_file(record_path: Path) -> Optional[Path]:
+    """Back up an existing record file to a fixed backup filename."""
+    if not record_path.exists():
+        return None
+
+    if "local" in record_path.name:
+        backup_path = record_path.parent / "batch_record_local_bk.json"
+    else:
+        backup_path = record_path.parent / "batch_record_bk.json"
+
+    shutil.copy2(record_path, backup_path)
+    log.info("Backed up record to %s", backup_path)
+    print(f"Backed up to {backup_path.name}")
+    return backup_path
+
+
+def _backup_and_reset_record(batch_path: Path, record_path: Path) -> BatchRecord:
+    """
+    Back up an existing record file and leave a clean usable record behind.
+
+    If the current record loads correctly, reset all tests to pending while
+    keeping the same record structure. If the file is missing or corrupt,
+    recreate it from the selected batch config.
+
+    :return: The clean record that was saved to *record_path*.
+    """
+    record = load_record(record_path)
+    if record_path.exists():
+        _backup_record_file(record_path)
+
+    if record is None:
+        base_args, tests = load_batch_config(batch_path)
+        record = create_record(base_args, tests)
+        log.info("Created fresh record from %s", batch_path)
+        print(f"Recreated clean record from {batch_path.name}")
+    else:
+        for test in record.tests:
+            test.status = "pending"
+            test.log_dir = ""
+            test.version_before = ""
+            test.version_after = ""
+            test.expected_version = ""
+            test.elapsed_seconds = 0.0
+            test.message = ""
+            test.started_at = ""
+            test.finished_at = ""
+            test.critical_failure = False
+
+        record.started_at = ""
+        record.finished_at = ""
+        log.info("Reset record to pending — %s", record_path)
+        print(f"Reset to pending — {record_path.name}")
+
+    save_record(record, record_path)
+    return record
+
+
 # ── CLI ───────────────────────────────────────────────────────────────
 
 
@@ -656,10 +764,7 @@ def main() -> int:
         return cmd_continue(args)
 
     if args.fresh:
-        _, record_path = _selected_paths(args.local)
-        if record_path.exists():
-            record_path.unlink()
-            print(f"Cleared {record_path}")
+        return cmd_fresh(args)
 
     return cmd_run(args)
 
