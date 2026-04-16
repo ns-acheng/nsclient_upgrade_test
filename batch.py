@@ -86,6 +86,44 @@ def _next_pending_index(record: BatchRecord) -> int:
     return -1
 
 
+def _next_pending_index_excluding(
+    record: BatchRecord,
+    deferred_ids: set[str],
+) -> int:
+    """
+    Return index of the first pending/running test not in *deferred_ids*.
+
+    This is used to defer known non-upgrade external failures (e.g. Gmail
+    download-link extraction) so the batch can continue to the next upgrade
+    test without re-running the same deferred case immediately.
+    """
+    for i, t in enumerate(record.tests):
+        if t.status in ("pending", "running") and t.id not in deferred_ids:
+            return i
+    return -1
+
+
+def _is_email_link_related_failure(message: str) -> bool:
+    """
+    Return True when a failure message indicates Gmail invite-link extraction
+    failed (external/non-upgrade dependency failure).
+    """
+    msg = (message or "").lower()
+    if not msg:
+        return False
+    return (
+        "email invite flow" in msg
+        and "download link" in msg
+        and "gmail" in msg
+    )
+
+
+def _is_stopped_by_user_failure(message: str) -> bool:
+    """Return True when a failure message indicates user-stop/ESC."""
+    msg = (message or "").lower()
+    return "stopped by user" in msg
+
+
 def _print_test_result(test: TestRun) -> None:
     color = _GREEN if test.status == "pass" else _RED
     elapsed = f"  ({test.elapsed_seconds:.0f}s)" if test.elapsed_seconds else ""
@@ -127,6 +165,7 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
     report_path = _report_path_for(record_path)
     stop_event = threading.Event()
     start_input_monitor(stop_event)
+    deferred_ids: set[str] = set()
 
     while True:
         if stop_event.is_set():
@@ -137,8 +176,20 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
             generate_html_report(record, report_path)
             return 1
 
-        idx = _next_pending_index(record)
+        idx = _next_pending_index_excluding(record, deferred_ids)
         if idx < 0:
+            # If only deferred tests are left, finish this batch pass and leave
+            # those tests as pending for a later retry/resume.
+            if deferred_ids and _next_pending_index(record) >= 0:
+                ids = ", ".join(sorted(deferred_ids))
+                log.warning(
+                    "Deferred external email-link failures kept pending: %s",
+                    ids,
+                )
+                print(
+                    "\nDeferred external email-link failure(s) left as pending: "
+                    f"{ids}"
+                )
             record.finished_at = datetime.now().isoformat(timespec="seconds")
             save_record(record, record_path)
             out = generate_html_report(record, report_path)
@@ -173,6 +224,51 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
 
         run_test_subprocess(record.base_args, test, result_file, stop_event)
         save_record(record, record_path)
+
+        # Treat external/non-upgrade dependency failures as deferred pending
+        # and move to next test in this pass.
+        if (
+            test.status == "fail"
+            and (
+                _is_email_link_related_failure(test.message)
+                or _is_stopped_by_user_failure(test.message)
+            )
+        ):
+            if _is_email_link_related_failure(test.message):
+                defer_reason = "email-link extraction failure"
+            else:
+                defer_reason = "stopped-by-user failure"
+            log.warning(
+                "[%s] Deferred as pending due to %s",
+                test.id,
+                defer_reason,
+            )
+            test.status = "pending"
+            test.critical_failure = False
+            # Keep start timestamp as audit trail but clear result payload.
+            test.log_dir = ""
+            test.version_before = ""
+            test.version_after = ""
+            test.expected_version = ""
+            test.elapsed_seconds = 0.0
+            test.finished_at = ""
+            if _is_email_link_related_failure(test.message):
+                test.message = (
+                    "Deferred: email invite/link extraction failed; "
+                    "pending for later retry"
+                )
+            else:
+                test.message = (
+                    "Deferred: stopped by user; "
+                    "pending for later retry"
+                )
+            deferred_ids.add(test.id)
+            save_record(record, record_path)
+            generate_html_report(record, report_path)
+            print(
+                f"  [PENDING] {test.id}: deferred ({defer_reason})"
+            )
+            continue
 
         # If the test is still "running", the monitor triggered a
         # reboot and the subprocess was killed by Windows shutdown.
