@@ -759,16 +759,53 @@ class UpgradeRunner:
 
             def _install_worker() -> None:
                 log.info("Local upgrade install worker entered")
+
+                def _detect_protection_mode() -> tuple[bool, str]:
+                    """
+                    Best-effort detection for protection-mode fallback.
+
+                    This maps to the environment where local install files are
+                    inaccessible (rollback/protected stage), which is the only
+                    case where --simulate registry pre-write may be skipped.
+                    """
+                    install_dir = LocalClient.get_install_dir(self.source_64_bit)
+                    try:
+                        if not install_dir.exists():
+                            return True, f"{install_dir} not found"
+                        if not os.access(install_dir, os.R_OK | os.X_OK):
+                            return True, f"no read/execute access to {install_dir}"
+                        # Force a directory read to catch runtime permission errors.
+                        list(install_dir.iterdir())
+                        return False, ""
+                    except Exception as access_exc:
+                        return True, str(access_exc)
+
                 try:
                     if self._simulate_upgrade:
                         try:
                             LocalClient.set_upgrade_in_progress(1)
-                        except Exception as exc:
-                            log.warning(
-                                "--simulate: failed to set UpgradeInProgress "
-                                "registry key; skipping (%s)",
-                                exc,
+                            log.info(
+                                "--simulate: wrote UpgradeInProgress registry "
+                                "value (DWORD=1)"
                             )
+                        except Exception as exc:
+                            protection_mode, protection_note = (
+                                _detect_protection_mode()
+                            )
+                            if protection_mode:
+                                log.warning(
+                                    "--simulate: skipped UpgradeInProgress "
+                                    "registry write in -f fallback/protection "
+                                    "mode (%s): %s",
+                                    protection_note,
+                                    exc,
+                                )
+                            else:
+                                raise RuntimeError(
+                                    "--simulate: failed to set "
+                                    "UpgradeInProgress registry key "
+                                    "(non-protection mode)"
+                                ) from exc
 
                         cache_updated = LocalClient.try_set_upgrade_nsconfig_cache(
                             last_client_updated="1",
@@ -789,28 +826,11 @@ class UpgradeRunner:
                                 # Only skip when the Netskope install folder
                                 # itself is inaccessible (e.g. rollback/protected
                                 # stage). Otherwise treat as a real failure.
-                                install_dir = LocalClient.get_install_dir(
-                                    self.source_64_bit
-                                )
-                                inaccessible = False
-                                access_note = ""
-                                try:
-                                    if not install_dir.exists():
-                                        inaccessible = True
-                                        access_note = "folder not found"
-                                    else:
-                                        if not os.access(install_dir, os.R_OK | os.X_OK):
-                                            inaccessible = True
-                                            access_note = "no read/execute access"
-                                        else:
-                                            # Force a directory read to catch
-                                            # permission/runtime access errors.
-                                            list(install_dir.iterdir())
-                                except Exception as access_exc:
-                                    inaccessible = True
-                                    access_note = str(access_exc)
-
+                                inaccessible, access_note = _detect_protection_mode()
                                 if inaccessible:
+                                    install_dir = LocalClient.get_install_dir(
+                                        self.source_64_bit
+                                    )
                                     log.warning(
                                         "--simulate: monitor-service prep skipped "
                                         "because Netskope install folder is "

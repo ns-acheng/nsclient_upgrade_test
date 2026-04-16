@@ -250,15 +250,20 @@ def run_test_subprocess(
 # ── Scheduled task helpers ────────────────────────────────────────────
 
 
-def register_batch_continue_task() -> None:
+def register_batch_continue_task(local: bool = False) -> None:
     """
     Register a Windows scheduled task that calls
-    ``batch.py --continue`` at next user logon.
+    ``batch.py --continue`` (and ``--local`` when requested)
+    at next user logon.
 
     Uses ``/f`` to overwrite any existing task with the same name.
+
+    :param local: When True, schedule ``batch.py --continue --local``.
     """
     batch_py = Path(__file__).parent / "batch.py"
     cmd_str = f'"{sys.executable}" "{batch_py}" --continue'
+    if local:
+        cmd_str += " --local"
     result = subprocess.run(
         [
             "schtasks", "/create",

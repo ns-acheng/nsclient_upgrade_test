@@ -158,7 +158,9 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
         # Register continue task BEFORE starting a reboot test so
         # the task is already in place when the machine reboots.
         if has_reboot(test.extra_args):
-            register_batch_continue_task()
+            register_batch_continue_task(
+                local=(record_path == BATCH_RECORD_LOCAL_JSON)
+            )
 
         # Persist "running" status to disk BEFORE launching the subprocess.
         # If the machine reboots during the test, batch.py is killed and
