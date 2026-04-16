@@ -380,27 +380,23 @@ class InstallerManager:
                     self._gmail_browser.restart()
 
                 if not invite_sent:
-                    try:
-                        self._gmail_browser.mark_all_as_read()
-                    except Exception:
-                        log.warning(
-                            "mark_all_as_read failed — continuing with "
-                            "baseline count",
-                            exc_info=True,
-                        )
+                    log.info(
+                        "Skipping mark_all_as_read (disabled due to unstable "
+                        "Gmail interaction); using baseline count only"
+                    )
 
-                    baseline = self._gmail_browser.count_unread_emails()
+                    baseline = self._gmail_browser.count_matching_emails()
 
                     log.info("Sending email invite to %s", invite_email)
                     self.webui.send_email_invite(invite_email)
                     invite_sent = True
 
-                    if not self._gmail_browser.wait_for_new_unread(
+                    if not self._gmail_browser.wait_for_new_matching_email(
                         baseline=baseline,
                         timeout=30,
                     ):
                         log.warning(
-                            "Polling did not detect new email "
+                            "Polling did not detect a new matching email "
                             "— proceeding to search (may be threaded)"
                         )
                 else:
@@ -484,18 +480,17 @@ class InstallerManager:
             self._cloned_installer.unlink()
             self._cloned_installer = None
 
-        # The old email is already read (we opened it to extract
-        # the link).  Capture baseline, re-send invite, then poll
-        # until the fresh email arrives.
-        baseline = self._gmail_browser.count_unread_emails()
+        # Capture baseline matching count, re-send invite, then poll
+        # until a new matching email arrives.
+        baseline = self._gmail_browser.count_matching_emails()
         log.info("Re-sending email invite to %s", invite_email)
         self.webui.send_email_invite(invite_email)
 
-        if not self._gmail_browser.wait_for_new_unread(
+        if not self._gmail_browser.wait_for_new_matching_email(
             baseline=baseline, timeout=60,
         ):
             raise RuntimeError(
-                "Install failed (1603) — no fresh unread email "
+                "Install failed (1603) — no fresh matching email "
                 "arrived within 60s after re-send"
             )
 

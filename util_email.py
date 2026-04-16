@@ -28,6 +28,7 @@ SUBJECT_TEMPLATE = '[EXTERNAL] Netskope New User Onboarding for "{email}"'
 # Gmail search-safe version — avoids nested quotes that break
 # subject:("...") syntax.  The email address is matched separately.
 SEARCH_SUBJECT = "Netskope New User Onboarding"
+SEARCH_LABEL = "Email Invite"
 LINK_TEXTS_64 = ["Windows Client (64-bit)", "Windows Client"]
 LINK_TEXTS_32 = ["Windows Client"]
 
@@ -188,13 +189,10 @@ class GmailBrowser:
             return 0
 
         search_query = (
-            f'is:unread subject:("{SEARCH_SUBJECT}") '
-            f'"{self._email_address}"'
+            self._build_invite_search_query(unread=True)
         )
         log.info("Marking old unread emails as read: %s", search_query)
-        search_box.clear()
-        search_box.send_keys(search_query)
-        search_box.send_keys(Keys.RETURN)
+        self._set_search_query(search_box, search_query, submit=True)
 
         # Wait for results
         try:
@@ -389,6 +387,88 @@ class GmailBrowser:
         )
         return False
 
+    def wait_for_new_matching_email(
+        self,
+        baseline: int = 0,
+        timeout: int = DEFAULT_TIMEOUT,
+    ) -> bool:
+        """
+        Wait until the count of matching invite emails increases.
+
+        This uses a single Gmail search query (label + subject + email)
+        and avoids unread-state dependence.
+
+        :param baseline: Matching row count before invite send.
+        :param timeout: Max seconds to wait.
+        :return: True when a newer matching email is detected.
+        """
+        if self._driver is None:
+            raise RuntimeError("Not connected — call connect() first")
+
+        from selenium.common.exceptions import TimeoutException
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        driver = self._driver
+        deadline = time.monotonic() + timeout
+
+        log.info(
+            "Polling matching invite emails (baseline=%d, timeout=%ds)",
+            baseline,
+            timeout,
+        )
+
+        while time.monotonic() < deadline:
+            if self._stop_event and self._stop_event.is_set():
+                log.warning("Stop event — aborting matching email wait")
+                return False
+
+            if "mail.google.com" not in (driver.current_url or ""):
+                try:
+                    driver.get(GMAIL_URL)
+                except TimeoutException:
+                    time.sleep(SEARCH_RETRY_INTERVAL)
+                    continue
+
+            self._dismiss_overlays(driver, By)
+            search_box = self._find_search_box(driver, By, EC, WebDriverWait)
+            search_query = self._build_invite_search_query(unread=False)
+            self._set_search_query(search_box, search_query, submit=True)
+
+            try:
+                self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
+                count = int(driver.execute_script(
+                    "return document.querySelectorAll('tr.zA, tr.zE').length;"
+                ) or 0)
+            except TimeoutException:
+                count = 0
+
+            if count > baseline:
+                log.info(
+                    "New matching invite email detected (%d > %d)",
+                    count,
+                    baseline,
+                )
+                return True
+
+            remaining = deadline - time.monotonic()
+            log.info(
+                "No new matching email yet (%d, baseline %d) — "
+                "polling in %ds (%.0fs left)",
+                count,
+                baseline,
+                SEARCH_RETRY_INTERVAL,
+                remaining,
+            )
+            time.sleep(SEARCH_RETRY_INTERVAL)
+
+        log.warning(
+            "Timed out waiting for new matching invite email after %ds",
+            timeout,
+        )
+        return False
+
     def count_unread_emails(self) -> int:
         """
         Count unread inbox rows matching the invite subject.
@@ -465,13 +545,10 @@ class GmailBrowser:
         search_box = self._find_search_box(driver, By, EC, WebDriverWait)
 
         search_query = (
-            f'subject:("{SEARCH_SUBJECT}") '
-            f'"{self._email_address}"'
+            self._build_invite_search_query(unread=False)
         )
         log.info("Counting existing emails: %s", search_query)
-        search_box.clear()
-        search_box.send_keys(search_query)
-        search_box.send_keys(Keys.RETURN)
+        self._set_search_query(search_box, search_query, submit=True)
 
         try:
             self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
@@ -490,11 +567,10 @@ class GmailBrowser:
         max_rows: Optional[int] = None,
     ) -> str:
         """
-        Search for unread invite emails and return the download URL.
+        Search for invite emails and return the download URL.
 
-        Uses ``is:unread`` filter so that emails opened in previous
-        calls are automatically skipped (Gmail marks opened emails
-        as read).  Retries until *timeout* seconds have elapsed.
+        Uses label + subject + email query and checks newest row first.
+        Retries until *timeout* seconds have elapsed.
 
         :param timeout: Max seconds to wait for the email to appear.
         :param max_rows: Maximum email rows to check per search pass.
@@ -538,13 +614,10 @@ class GmailBrowser:
 
             # Step 3: Search for unread emails matching the subject
             search_query = (
-                f'is:unread subject:("{SEARCH_SUBJECT}") '
-                f'"{self._email_address}"'
+                self._build_invite_search_query(unread=False)
             )
             log.info("Searching Gmail: %s", search_query)
-            search_box.clear()
-            search_box.send_keys(search_query)
-            search_box.send_keys(Keys.RETURN)
+            self._set_search_query(search_box, search_query, submit=True)
 
             # Step 4: Wait for results and count rows
             try:
@@ -560,20 +633,18 @@ class GmailBrowser:
                         f"{timeout}s: {SEARCH_SUBJECT}"
                     )
                 log.info(
-                    "No unread email yet — retrying in %ds",
+                    "No matching email yet — retrying in %ds",
                     SEARCH_RETRY_INTERVAL,
                 )
                 time.sleep(SEARCH_RETRY_INTERVAL)
                 continue
 
-            # Step 5: Iterate unread rows (newest first).
-            # Opening an email marks it as read, so the next
-            # is:unread search will skip it automatically.
+            # Step 5: Iterate matched rows (newest first).
             check_count = row_count
             if max_rows is not None:
                 check_count = min(row_count, max_rows)
             log.info(
-                "%d unread email(s) found (checking %d)",
+                "%d matching email(s) found (checking %d)",
                 row_count, check_count,
             )
             for row_idx in range(check_count):
@@ -634,12 +705,12 @@ class GmailBrowser:
             # No matching row found in this pass
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    "No unread email with matching download "
+                    "No matching email with download "
                     f"link found within {timeout}s "
                     f"(tenant={self._tenant_hostname})"
                 )
             log.info(
-                "No matching link in unread emails "
+                "No matching link in latest matching emails "
                 "— retrying in %ds",
                 SEARCH_RETRY_INTERVAL,
             )
@@ -871,11 +942,54 @@ class GmailBrowser:
                             return element
                     except Exception:
                         continue
-                # Fallback in case visibility state is unreliable.
-                return elements[0]
             time.sleep(0.5)
 
         raise TimeoutException("Gmail search box not found")
+
+    @staticmethod
+    def _set_search_query(
+        search_box: Any,
+        query: str,
+        submit: bool = True,
+    ) -> None:
+        """
+        Set Gmail search query robustly without relying on clear() only.
+
+        Some Gmail UI states expose a present-but-not-interactable input;
+        this method tries a normal clear/send path first, then a select-all
+        replacement path as fallback.
+        """
+        from selenium.common.exceptions import ElementNotInteractableException
+        from selenium.webdriver.common.keys import Keys
+
+        try:
+            search_box.click()
+            search_box.clear()
+            search_box.send_keys(query)
+            if submit:
+                search_box.send_keys(Keys.RETURN)
+            return
+        except ElementNotInteractableException:
+            pass
+
+        # Fallback path for transient non-interactable states.
+        search_box.click()
+        search_box.send_keys(Keys.CONTROL, "a")
+        search_box.send_keys(Keys.BACKSPACE)
+        search_box.send_keys(query)
+        if submit:
+            search_box.send_keys(Keys.RETURN)
+
+    def _build_invite_search_query(self, unread: bool = True) -> str:
+        """Build Gmail query for invite emails using label + subject + email."""
+        parts: list[str] = []
+        if unread:
+            parts.append("is:unread")
+        if SEARCH_LABEL:
+            parts.append(f'label:"{SEARCH_LABEL}"')
+        parts.append(f'subject:("{SEARCH_SUBJECT}")')
+        parts.append(f'"{self._email_address}"')
+        return " ".join(parts)
 
     @staticmethod
     def _wait_for_email_rows(
