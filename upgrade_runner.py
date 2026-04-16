@@ -811,6 +811,9 @@ class UpgradeRunner:
                 daemon=True,
                 name="local-upgrade-install",
             )
+            log.info(
+                "Triggering local upgrade MSI install now (no pre-wait)"
+            )
             install_thread.start()
             log.info(
                 "Upgrade MSI install started — monitor and install "

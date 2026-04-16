@@ -1460,27 +1460,45 @@ class LocalClient:
             )
 
         sta_update_log_path.parent.mkdir(parents=True, exist_ok=True)
-        log.info(
-            "Installing local upgrade via msiexec: %s (log: %s)",
-            setup_file_path, sta_update_log_path,
-        )
-        result = subprocess.run(
-            [
-                "msiexec",
-                "/l*v+", str(sta_update_log_path),
-                "/i", setup_file_path,
-                "/qn",
-            ],
-            capture_output=True,
-            timeout=300,
+        cmd = [
+            "msiexec",
+            "/l*v+", str(sta_update_log_path),
+            "/i", setup_file_path,
+            "/qn",
+        ]
+        trigger_time = datetime.now().isoformat(timespec="seconds")
+        log.info("Local upgrade msiexec trigger time: %s", trigger_time)
+        log.info("Local upgrade msiexec args: %s", " ".join(cmd))
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
         )
-        if result.returncode != 0:
+        log.info("Local upgrade msiexec started (pid=%s)", proc.pid)
+
+        try:
+            stdout, stderr = proc.communicate(timeout=300)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            raise RuntimeError(
+                "Local upgrade msiexec timed out after 300s "
+                f"(pid={proc.pid}, log={sta_update_log_path})"
+            )
+
+        if proc.returncode != 0:
             raise RuntimeError(
                 "Local upgrade msiexec failed "
-                f"(exit code {result.returncode})"
+                f"(exit code {proc.returncode}, pid={proc.pid}, "
+                f"log={sta_update_log_path})"
             )
+        if stdout:
+            log.debug("Local upgrade msiexec stdout: %s", stdout.strip())
+        if stderr:
+            log.debug("Local upgrade msiexec stderr: %s", stderr.strip())
         log.info("Local upgrade msiexec completed")
 
     # ── Crash Dump Detection & Log Bundle ──────────────────────────────
