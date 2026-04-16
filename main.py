@@ -309,16 +309,6 @@ def cmd_setup(cfg: ToolConfig) -> int:
     print("  Tenant and username are saved to data/config.json.")
     print("  Password is encrypted and saved locally (never in git).\n")
 
-    # Auto-detect tenant and config name from local NSClient installation
-    ns_info = LocalClient.detect_tenant_from_nsconfig()
-    if ns_info:
-        if not cfg.tenant.hostname:
-            print(f"  Detected tenant from NSClient: {ns_info.tenant_hostname}")
-            cfg.tenant.hostname = ns_info.tenant_hostname
-        if not cfg.tenant.config_name and ns_info.config_name:
-            print(f"  Detected config name: {ns_info.config_name}")
-            cfg.tenant.config_name = ns_info.config_name
-
     hostname = input(f"  Tenant hostname [{cfg.tenant.hostname or 'e.g. tenant.goskope.com'}]: ").strip()
     if hostname:
         cfg.tenant.hostname = hostname
@@ -1105,19 +1095,8 @@ def main() -> int:
         log.info("main.py %s", " ".join(sys.argv[1:]))
         return cmd_continue(args)
 
-    # Auto-detect tenant from local NSClient (if installed).
-    # config_name is NOT detected here for upgrade/disable-upgrade —
-    # the runner resolves it after install + nsdiag -u sync, because
-    # on a fresh machine nsconfig.json doesn't exist yet.
-    ns_info = LocalClient.detect_tenant_from_nsconfig()
-    if ns_info:
-        if not cfg.tenant.hostname:
-            cfg.tenant.hostname = ns_info.tenant_hostname
-            print(f"  Auto-detected tenant: {ns_info.tenant_hostname}")
-        skip_config_name = args.command in ("upgrade", "disable-upgrade")
-        if not skip_config_name and not cfg.tenant.config_name and ns_info.config_name:
-            cfg.tenant.config_name = ns_info.config_name
-            print(f"  Auto-detected config: {ns_info.config_name}")
+    # Tenant hostname is loaded from data/config.json via load_config() above.
+    # No auto-detection from local NSClient needed — config file is authoritative.
 
     # Resolve password BEFORE logging starts so the prompt is not buried
     #   1. CLI --password flag  (already in cfg)
