@@ -407,7 +407,6 @@ class GmailBrowser:
 
         from selenium.common.exceptions import TimeoutException
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._driver
@@ -424,17 +423,14 @@ class GmailBrowser:
                 log.warning("Stop event — aborting matching email wait")
                 return False
 
-            if "mail.google.com" not in (driver.current_url or ""):
-                try:
-                    driver.get(self._gmail_start_url())
-                except TimeoutException:
-                    time.sleep(SEARCH_RETRY_INTERVAL)
-                    continue
+            # Refresh the label page — emails are pre-filtered, no search needed
+            try:
+                driver.get(self._gmail_start_url())
+            except TimeoutException:
+                time.sleep(SEARCH_RETRY_INTERVAL)
+                continue
 
             self._dismiss_overlays(driver, By)
-            search_box = self._find_search_box(driver, By, EC, WebDriverWait)
-            search_query = self._build_invite_search_query(unread=False)
-            self._set_search_query(search_box, search_query, submit=True)
 
             try:
                 self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
