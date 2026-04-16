@@ -530,25 +530,15 @@ class GmailBrowser:
 
         from selenium.common.exceptions import TimeoutException
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.common.keys import Keys
-        from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._driver
 
-        if "mail.google.com" not in (driver.current_url or ""):
-            log.info("Navigating to Gmail")
-            driver.get(self._gmail_start_url())
+        # Navigate to the label URL — emails are pre-filtered, no search needed
+        log.info("Navigating to Gmail label to count existing emails")
+        driver.get(self._gmail_start_url())
 
         self._dismiss_overlays(driver, By)
-
-        search_box = self._find_search_box(driver, By, EC, WebDriverWait)
-
-        search_query = (
-            self._build_invite_search_query(unread=False)
-        )
-        log.info("Counting existing emails: %s", search_query)
-        self._set_search_query(search_box, search_query, submit=True)
 
         try:
             self._wait_for_email_rows(driver, By, WebDriverWait, timeout=15)
