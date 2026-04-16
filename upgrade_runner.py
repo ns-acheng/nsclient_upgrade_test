@@ -760,7 +760,15 @@ class UpgradeRunner:
                 log.info("Local upgrade install worker entered")
                 try:
                     if self._simulate_upgrade:
-                        LocalClient.set_upgrade_in_progress(1)
+                        try:
+                            LocalClient.set_upgrade_in_progress(1)
+                        except Exception as exc:
+                            log.warning(
+                                "--simulate: failed to set UpgradeInProgress "
+                                "registry key; skipping (%s)",
+                                exc,
+                            )
+
                         cache_updated = LocalClient.try_set_upgrade_nsconfig_cache(
                             last_client_updated="1",
                             new_client_ver="137.0.0.2222",
@@ -770,10 +778,18 @@ class UpgradeRunner:
                                 "--simulate: nsconfig cache update skipped "
                                 "(encrypted or no read/write permission)"
                             )
+
                         if not self._watchdog_mode:
-                            LocalClient.ensure_non_watchdog_monitor_service(
-                                is_64_bit=self.source_64_bit,
-                            )
+                            try:
+                                LocalClient.ensure_non_watchdog_monitor_service(
+                                    is_64_bit=self.source_64_bit,
+                                )
+                            except Exception as exc:
+                                log.warning(
+                                    "--simulate: monitor-service prep failed; "
+                                    "skipping (%s)",
+                                    exc,
+                                )
                         else:
                             log.info(
                                 "--simulate monitor-service clone skipped in "
