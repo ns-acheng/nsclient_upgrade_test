@@ -834,8 +834,10 @@ class TimingMonitor:
                 "Timing %d fired (action %d) — rebooting immediately",
                 self._state.reboot_time, action,
             )
+            shutdown_cmd = ["shutdown", "/r", "/f", "/t", "0"]
+            log.info("Shutdown command: %s", " ".join(shutdown_cmd))
             subprocess.run(
-                ["shutdown", "/r", "/f", "/t", "0"],
+                shutdown_cmd,
                 capture_output=True, text=True, timeout=10,
             )
         else:
@@ -844,11 +846,13 @@ class TimingMonitor:
                 self._state.reboot_time,
                 self._state.reboot_delay,
             )
+            shutdown_cmd = [
+                "shutdown", "/r", "/f", "/t",
+                str(self._state.reboot_delay),
+            ]
+            log.info("Shutdown command: %s", " ".join(shutdown_cmd))
             subprocess.run(
-                [
-                    "shutdown", "/r", "/f", "/t",
-                    str(self._state.reboot_delay),
-                ],
+                shutdown_cmd,
                 capture_output=True, text=True, timeout=10,
             )
 
