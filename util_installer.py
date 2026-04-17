@@ -418,10 +418,14 @@ class InstallerManager:
                 ):
                     raise
 
+                # Extract just the error message without the stack trace
+                exc_msg = str(exc).split('\n')[0]
+                if not exc_msg:
+                    exc_msg = exc.__class__.__name__
                 log.warning(
                     "Recoverable Gmail browser disconnect while "
                     "fetching invite link: %s",
-                    exc,
+                    exc_msg,
                 )
 
         raise RuntimeError(

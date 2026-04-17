@@ -71,7 +71,7 @@ def load_batch_config(path: Path = BATCH_JSON) -> tuple[str, list[dict]]:
     :param path: Path to batch.json.
     :return: (base_args, list of {'id': str, 'extra_args': str}).
     """
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     base_args: str = data.get("base_args", "")
     tests: list[dict] = []
@@ -105,7 +105,7 @@ def load_record(path: Path = BATCH_RECORD_JSON) -> Optional[BatchRecord]:
     if not path.exists():
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
         return BatchRecord(
             batch_id=data["batch_id"],
@@ -136,7 +136,7 @@ def read_result_file(path: Path) -> Optional[dict]:
     if not path.exists():
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except Exception as exc:
         log.warning("Failed to read result file %s: %s", path, exc)
