@@ -254,20 +254,18 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
         # Treat external/non-upgrade dependency failures (and unknown
         # version_before failures) as deferred pending and move to next
         # test in this pass.
-        if (
-            (
-                _is_email_link_related_failure(test.message)
-                or _is_stopped_by_user_failure(test.message)
-                or _is_unknown_version_before_failure(test)
-            )
-        ):
-            if _is_email_link_related_failure(test.message):
+        is_email_failure = _is_email_link_related_failure(test.message)
+        is_stopped_failure = _is_stopped_by_user_failure(test.message)
+        is_unknown_before = _is_unknown_version_before_failure(test)
+
+        if is_email_failure or is_stopped_failure or is_unknown_before:
+            if is_email_failure:
                 defer_reason = "email-link extraction failure"
                 pending_note = (
                     "Deferred: email invite/link extraction failed; "
                     "pending for later retry"
                 )
-            elif _is_stopped_by_user_failure(test.message):
+            elif is_stopped_failure:
                 defer_reason = "stopped-by-user failure"
                 pending_note = (
                     "Deferred: stopped by user; "
@@ -292,6 +290,13 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
             print(
                 f"  [PENDING] {test.id}: deferred ({defer_reason})"
             )
+
+            # This failure type is intentionally deferred and should not force
+            # a full batch stop in the next loop iteration.
+            if is_stopped_failure and stop_event.is_set():
+                stop_event.clear()
+                start_input_monitor(stop_event)
+
             continue
 
         # If the test is still "running", the monitor triggered a
