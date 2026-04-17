@@ -144,6 +144,8 @@ class GmailBrowser:
             log.info(
                 "Connected to Chrome on port %d", self._debug_port
             )
+            # Verify Chrome loaded to the correct URL
+            self._verify_gmail_label_page()
         except Exception as exc:
             raise RuntimeError(
                 f"Could not connect to Chrome on port "
@@ -423,6 +425,7 @@ class GmailBrowser:
             # Refresh the label page — emails are pre-filtered, no search needed
             try:
                 driver.get(self._gmail_start_url())
+                self._verify_gmail_label_page()
             except TimeoutException:
                 time.sleep(3)
                 continue
@@ -527,6 +530,7 @@ class GmailBrowser:
         # Navigate to the label URL — emails are pre-filtered, no search needed
         log.info("Navigating to Gmail label to count existing emails")
         driver.get(self._gmail_start_url())
+        self._verify_gmail_label_page()
 
         self._dismiss_overlays(driver, By)
 
@@ -580,6 +584,7 @@ class GmailBrowser:
             # Step 1: Navigate to the label URL — emails are pre-filtered
             log.info("Navigating to Gmail label")
             driver.get(self._gmail_start_url())
+            self._verify_gmail_label_page()
 
             # Dismiss notification prompts that block clicks
             self._dismiss_overlays(driver, By)
@@ -666,6 +671,14 @@ class GmailBrowser:
                     continue
 
                 log.info("Found download link: %s", url)
+                
+                # Delete the email now that we've extracted the link
+                try:
+                    self._delete_current_email(driver)
+                    log.info("Email deleted after link extraction")
+                except Exception as exc:
+                    log.warning("Failed to delete email: %s", exc)
+                
                 return url
 
             # No matching row found in this pass
@@ -1007,6 +1020,15 @@ class GmailBrowser:
         except Exception:
             pass
 
+    @staticmethod
+    def _delete_current_email(driver: Any) -> None:
+        """Delete the currently open email using Gmail keyboard shortcut 'd'."""
+        try:
+            driver.find_element("tag name", "body").send_keys("d")
+            time.sleep(1)
+        except Exception:
+            pass
+
     def _is_gmail_ready(self) -> bool:
         """Navigate to Gmail and verify the search box is reachable."""
         from selenium.webdriver.common.by import By
@@ -1030,10 +1052,36 @@ class GmailBrowser:
         """Return Gmail start URL, preferring label deep-link when configured."""
         if SEARCH_LABEL:
             return (
-                "https://mail.google.com/mail/u/0/?pli=1#label/"
+                "https://mail.google.com/mail/u/0/#label/"
                 f"{quote_plus(SEARCH_LABEL)}"
             )
         return GMAIL_URL
+
+    def _verify_gmail_label_page(self, timeout: int = 10) -> bool:
+        """
+        Verify that the current page is the Gmail label page.
+        Returns True if on the correct page, False otherwise.
+        """
+        if self._driver is None:
+            return False
+        try:
+            expected = self._gmail_start_url()
+            current = self._driver.current_url
+            log.info("Expected URL: %s", expected)
+            log.info("Current URL: %s", current)
+            
+            # Check if current URL matches expected (allowing for minor variations)
+            if "#label/Email" in current and "mail.google.com" in current:
+                log.info("Verified: On correct Gmail label page")
+                return True
+            else:
+                log.warning(
+                    "URL mismatch - expected label page, got: %s", current
+                )
+                return False
+        except Exception as exc:
+            log.warning("Failed to verify Gmail page: %s", exc)
+            return False
 
     def _close_chrome_via_cdp(self) -> None:
         """Close Chrome via DevTools Protocol and disconnect WebDriver."""
