@@ -1057,30 +1057,27 @@ class GmailBrowser:
             )
         return GMAIL_URL
 
-    def _verify_gmail_label_page(self, timeout: int = 10) -> bool:
-        """
-        Verify that the current page is the Gmail label page.
-        Returns True if on the correct page, False otherwise.
-        """
+    def _verify_gmail_label_page(self) -> bool:
+        """Verify current page is the configured Gmail label URL."""
         if self._driver is None:
             return False
+
         try:
             expected = self._gmail_start_url()
-            current = self._driver.current_url
-            log.info("Expected URL: %s", expected)
-            log.info("Current URL: %s", current)
-            
-            # Check if current URL matches expected (allowing for minor variations)
-            if "#label/Email" in current and "mail.google.com" in current:
-                log.info("Verified: On correct Gmail label page")
+            current = self._driver.current_url or ""
+
+            if current.startswith(expected):
+                log.info("Verified: On Gmail URL: %s", expected)
                 return True
-            else:
-                log.warning(
-                    "URL mismatch - expected label page, got: %s", current
-                )
-                return False
+
+            log.warning(
+                "Gmail URL mismatch (expected=%s, current=%s)",
+                expected,
+                current,
+            )
+            return False
         except Exception as exc:
-            log.warning("Failed to verify Gmail page: %s", exc)
+            log.warning("Failed to verify Gmail URL: %s", exc)
             return False
 
     def _close_chrome_via_cdp(self) -> None:
