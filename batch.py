@@ -356,6 +356,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     """
     batch_path, record_path = _selected_paths(args.local)
 
+    # Fresh run only: clean stale scheduler artifacts from prior runs so
+    # unexpected --continue tasks do not trigger on reboot/logon.
+    if not args.resume and not args.retry_failed and not args.retry and not args.retry_unknown:
+        _cleanup_stale_continue_artifacts()
+
     # ── Retry mode ────────────────────────────────────────────────────
     if args.retry_failed or args.retry or args.retry_unknown:
         record = load_record(record_path)
@@ -510,6 +515,30 @@ def _prompt_overwrite_or_backup(record_path: Path) -> Optional[BatchRecord]:
     return None
 
 
+def _cleanup_stale_continue_artifacts() -> None:
+    """Remove stale continue tasks/state before a fresh batch start."""
+    # Batch continue task from prior interrupted batch runs
+    delete_batch_continue_task()
+
+    # Monitor continue artifacts from non-batch runs can also fire on logon
+    # and should not interfere with fresh batch execution.
+    try:
+        from util_monitor import (
+            MONITOR_STATE_PATH,
+            clear_monitor_state,
+            delete_continue_task,
+        )
+
+        if MONITOR_STATE_PATH.is_file():
+            log.warning(
+                "Stale monitor_state.json found — removing before fresh batch start"
+            )
+            clear_monitor_state()
+        delete_continue_task()
+    except Exception as exc:
+        log.warning("Failed to clean stale monitor continue artifacts: %s", exc)
+
+
 def cmd_continue(args: argparse.Namespace) -> int:
     """
     Resume after reboot.
@@ -591,6 +620,9 @@ def cmd_fresh(args: argparse.Namespace) -> int:
     as pending and ready to run.
     """
     batch_path, record_path = _selected_paths(args.local)
+
+    # Always clean stale scheduler artifacts for explicit fresh reset.
+    _cleanup_stale_continue_artifacts()
     report_path = _report_path_for(record_path)
 
     print("\n" + "=" * 55)

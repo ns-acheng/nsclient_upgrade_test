@@ -1128,12 +1128,14 @@ def main() -> int:
         from util_monitor import (
             clear_monitor_state, delete_continue_task, MONITOR_STATE_PATH,
         )
+        from util_batch import delete_batch_continue_task
         if MONITOR_STATE_PATH.is_file():
             log.warning(
                 "Stale monitor_state.json found — removing before fresh start"
             )
             clear_monitor_state()
         delete_continue_task()
+        delete_batch_continue_task()
     log.info("main.py %s", " ".join(sys.argv[1:]))
 
     # Validate config
