@@ -1135,7 +1135,18 @@ def main() -> int:
             )
             clear_monitor_state()
         delete_continue_task()
-        delete_batch_continue_task()
+        # Batch mode (batch.py): NsClientBatchContinue is intentionally
+        # registered before reboot tests and must not be deleted here.
+        is_batch_managed_upgrade = (
+            args.command == "upgrade" and bool(getattr(args, "result_file", None))
+        )
+        if is_batch_managed_upgrade:
+            log.info(
+                "Batch-managed upgrade detected — keeping %s task",
+                "NsClientBatchContinue",
+            )
+        else:
+            delete_batch_continue_task()
     log.info("main.py %s", " ".join(sys.argv[1:]))
 
     # Validate config
