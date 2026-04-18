@@ -14,6 +14,17 @@ import time
 log = logging.getLogger(__name__)
 
 
+def drain_input() -> None:
+    """
+    Discard any buffered keystrokes so a previously-pressed ESC does not
+    immediately re-trigger a freshly started monitor.
+    """
+    if sys.platform == "win32":
+        import msvcrt
+        while msvcrt.kbhit():
+            msvcrt.getch()
+
+
 def start_input_monitor(stop_event: threading.Event) -> None:
     """
     Start a daemon thread that monitors for ESC key press.

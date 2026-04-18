@@ -47,7 +47,7 @@ from util_batch import (
     run_test_subprocess,
     save_record,
 )
-from util_input import start_input_monitor
+from util_input import drain_input, start_input_monitor
 from util_log import setup_batch_logging, setup_logging
 
 log = logging.getLogger(__name__)
@@ -295,6 +295,7 @@ def _execute_pending(record: BatchRecord, record_path: Path) -> int:
             # a full batch stop in the next loop iteration.
             if is_stopped_failure and stop_event.is_set():
                 stop_event.clear()
+                drain_input()
                 start_input_monitor(stop_event)
 
             continue
