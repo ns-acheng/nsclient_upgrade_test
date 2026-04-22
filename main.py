@@ -189,6 +189,13 @@ def build_parser() -> argparse.ArgumentParser:
             "cache.newClientVer=137.0.0.2222 before local upgrade MSI install"
         ),
     )
+    upgrade_parser.add_argument(
+        "--take5", action="store_true",
+        help=(
+            "Postpone 5 minutes after base MSI install and first tenant "
+            "sync, before continuing the scenario"
+        ),
+    )
 
     # ── disable-upgrade ─────────────────────────────────────────
     disable_parser = subparsers.add_parser(
@@ -206,6 +213,13 @@ def build_parser() -> argparse.ArgumentParser:
     disable_parser.add_argument(
         "--email", type=str, default=None,
         help="Send email invite to this address before upgrade",
+    )
+    disable_parser.add_argument(
+        "--take5", action="store_true",
+        help=(
+            "Postpone 5 minutes after base MSI install and first tenant "
+            "sync, before continuing the scenario"
+        ),
     )
 
     # ── continue ────────────────────────────────────────────────
@@ -718,6 +732,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         batch_mode=bool(args.result_file),
         original_argv=sys.argv[1:],
         simulate_upgrade=bool(args.simulate),
+        take5=bool(args.take5),
     )
 
     # Execute scenario
@@ -777,6 +792,7 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         log_dir=log_dir,
         email_profiles=cfg.client.email_profiles,
         save_config_fn=lambda: save_config(cfg, args.config),
+        take5=bool(args.take5),
     )
 
     result = runner.run_upgrade_disabled(

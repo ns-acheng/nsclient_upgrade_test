@@ -78,6 +78,8 @@ class UpgradeRunner:
     local client operations (install, version check, config pull).
     """
 
+    TAKE5_SECONDS = 300
+
     def __init__(
         self,
         webui: WebUIClient,
@@ -99,6 +101,7 @@ class UpgradeRunner:
         batch_mode: bool = False,
         original_argv: Optional[list[str]] = None,
         simulate_upgrade: bool = False,
+        take5: bool = False,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -140,6 +143,7 @@ class UpgradeRunner:
         self._watchdog_mode: bool = False
         self._auto_update_already_enabled: bool = False
         self._simulate_upgrade: bool = simulate_upgrade
+        self._take5: bool = take5
         self._crash_monitor: Optional[CrashMonitor] = None
 
         # Composed helpers
@@ -196,7 +200,8 @@ class UpgradeRunner:
                 from_version, invite_email,
             )
             self._check_stopped()
-            self._sync_and_detect_config()
+            did_sync = self._sync_and_detect_config()
+            self._maybe_take5_after_first_sync(did_sync)
             skip = self._skip_if_timing_not_applicable(scenario, start_time)
             if skip:
                 return skip
@@ -427,7 +432,8 @@ class UpgradeRunner:
                 from_version, invite_email,
             )
             self._check_stopped()
-            self._sync_and_detect_config()
+            did_sync = self._sync_and_detect_config()
+            self._maybe_take5_after_first_sync(did_sync)
             skip = self._skip_if_timing_not_applicable(scenario, start_time)
             if skip:
                 return skip
@@ -598,7 +604,8 @@ class UpgradeRunner:
                 from_version, invite_email,
             )
             self._check_stopped()
-            self._sync_and_detect_config()
+            did_sync = self._sync_and_detect_config()
+            self._maybe_take5_after_first_sync(did_sync)
             skip = self._skip_if_timing_not_applicable(scenario, start_time)
             if skip:
                 return skip
@@ -772,7 +779,8 @@ class UpgradeRunner:
                 from_version=None, invite_email=invite_email,
             )
             self._check_stopped()
-            self._sync_and_detect_config()
+            did_sync = self._sync_and_detect_config()
+            self._maybe_take5_after_first_sync(did_sync)
             skip = self._skip_if_timing_not_applicable(scenario, start_time)
             if skip:
                 return skip
@@ -1356,7 +1364,7 @@ class UpgradeRunner:
             MAX_SYNC_ATTEMPTS,
         )
 
-    def _sync_and_detect_config(self) -> None:
+    def _sync_and_detect_config(self) -> bool:
         """
         Sync config from tenant and re-detect config_name.
 
@@ -1374,9 +1382,11 @@ class UpgradeRunner:
         redundant WebUI config calls.
 
         Skips entirely when config_name is already set.
+
+        :return: True if a tenant sync was performed, False otherwise.
         """
         if self.config_name:
-            return
+            return False
         log.info("config_name is empty — syncing config from tenant")
         self.client.sync_config_from_tenant(
             is_64_bit=self.source_64_bit,
@@ -1403,6 +1413,19 @@ class UpgradeRunner:
             "allowAutoUpdate already enabled: %s",
             self._auto_update_already_enabled,
         )
+        return True
+
+    def _maybe_take5_after_first_sync(self, did_sync: bool) -> None:
+        """Postpone for 5 minutes after the first tenant sync when enabled."""
+        if not self._take5 or not did_sync:
+            return
+        log.info(
+            "--take5 enabled: postponing %ds after first tenant sync",
+            self.TAKE5_SECONDS,
+        )
+        if self.stop_event.wait(timeout=self.TAKE5_SECONDS):
+            raise KeyboardInterrupt("Stopped by user (ESC) during --take5 delay")
+        log.info("--take5 delay completed")
 
     # ── Timing applicability ─────────────────────────────────────────
 
