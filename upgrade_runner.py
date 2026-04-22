@@ -824,6 +824,30 @@ class UpgradeRunner:
                     inaccessible (rollback/protected stage), which is the only
                     case where --simulate registry pre-write may be skipped.
                     """
+                    nsconfig_path = LocalClient.NSCONFIG_PATH
+                    nsconfig_enc_path = LocalClient.NSCONFIG_ENC_PATH
+
+                    # When nsconfig.json is unavailable we already fall back
+                    # to ``nsdiag -f``. Treat this as protection mode to avoid
+                    # false "non-protection mode" classification.
+                    try:
+                        if not nsconfig_path.is_file():
+                            if nsconfig_enc_path.is_file():
+                                return (
+                                    True,
+                                    "nsconfig.json unavailable (nsconfig.enc "
+                                    "exists; using -f fallback)",
+                                )
+                            return (
+                                True,
+                                "nsconfig.json unavailable (using -f fallback)",
+                            )
+                    except PermissionError as exc:
+                        return (
+                            True,
+                            f"nsconfig.json access denied (using -f fallback): {exc}",
+                        )
+
                     install_dir = LocalClient.get_install_dir(self.source_64_bit)
                     try:
                         if not install_dir.exists():
@@ -857,11 +881,13 @@ class UpgradeRunner:
                                     exc,
                                 )
                             else:
-                                raise RuntimeError(
+                                log.warning(
                                     "--simulate: failed to set "
                                     "UpgradeInProgress registry key "
-                                    "(non-protection mode)"
-                                ) from exc
+                                    "(non-protection mode) — "
+                                    "ignoring and continuing: %s",
+                                    exc,
+                                )
 
                         cache_updated = LocalClient.try_set_upgrade_nsconfig_cache(
                             last_client_updated="1",
