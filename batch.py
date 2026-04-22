@@ -4,12 +4,11 @@ Batch runner for Netskope Client auto-upgrade tests.
 Usage:
     python batch.py                  Run all pending tests from data/batch.json
     python batch.py --local          Run local profile (data/batch_local.json)
-    python batch.py --resume         Resume an existing batch run
     python batch.py --continue       Resume after reboot (called by scheduled task)
     python batch.py --report         Re-generate HTML report from existing record
     python batch.py --merge record1.json record2.json
     python batch.py --merge --local record1.json record2.json
-    python batch.py --fresh          Discard record and start fresh
+    python batch.py --fresh-report   Discard record and start fresh
 
 Options:
     --local          Use local profile paths
@@ -348,9 +347,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     """
     Run all pending tests.
 
-    With ``--resume``, load the existing record and skip completed
-    tests.  Without it, start fresh — but if a record already exists,
-    prompt the user to overwrite or back it up first.
+    If an existing batch record exists, automatically resume from it.
+    Otherwise, start a new batch from scratch.
 
     With ``--retry-failed`` or ``--retry ID``, load the existing record,
     reset the target tests to pending, and re-run.
@@ -359,7 +357,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # Fresh run only: clean stale scheduler artifacts from prior runs so
     # unexpected --continue tasks do not trigger on reboot/logon.
-    if not args.resume and not args.retry_failed and not args.retry and not args.retry_unknown:
+    if not args.retry_failed and not args.retry and not args.retry_unknown:
         _cleanup_stale_continue_artifacts()
 
     # ── Retry mode ────────────────────────────────────────────────────
@@ -383,35 +381,32 @@ def cmd_run(args: argparse.Namespace) -> int:
         return _execute_pending(record, record_path)
 
     # ── Resume mode ───────────────────────────────────────────────────
-    if args.resume:
-        record = load_record(record_path)
-        if record:
-            auto_reset = 0
-            for test in record.tests:
-                if _is_unknown_version_before_failure(test):
-                    _mark_test_pending_for_retake(
-                        test,
-                        "Deferred: version_before unknown; pending for later retry",
-                    )
-                    auto_reset += 1
-            if auto_reset:
-                save_record(record, record_path)
-                log.info(
-                    "Auto-reset %d unknown-version failure(s) to pending",
-                    auto_reset,
+    # Auto-resume: if a record exists, always continue from it
+    record = load_record(record_path)
+    if record:
+        auto_reset = 0
+        for test in record.tests:
+            if _is_unknown_version_before_failure(test):
+                _mark_test_pending_for_retake(
+                    test,
+                    "Deferred: version_before unknown; pending for later retry",
                 )
+                auto_reset += 1
+        if auto_reset:
+            save_record(record, record_path)
             log.info(
-                "Resuming batch %s — %d tests total",
-                record.batch_id, len(record.tests),
+                "Auto-reset %d unknown-version failure(s) to pending",
+                auto_reset,
             )
-        else:
-            log.info("No existing record found — starting fresh")
-            record = None
+        log.info(
+            "Resuming batch %s — %d tests total",
+            record.batch_id, len(record.tests),
+        )
     else:
+        log.info("No existing record found — starting fresh")
         record = None
-        if record_path.exists():
-            record = _prompt_overwrite_or_backup(record_path)
-
+    
+    # If no existing record, create a new one
     if record is None:
         base_args, tests = load_batch_config(batch_path)
         record = create_record(base_args, tests)
@@ -885,10 +880,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Record JSON files used by --merge",
     )
     parser.add_argument(
-        "--resume", action="store_true",
-        help="Resume from an existing batch record, skipping completed tests",
-    )
-    parser.add_argument(
         "--continue", dest="do_continue", action="store_true",
         help="Resume after reboot (called by scheduled task)",
     )
@@ -897,7 +888,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Re-generate HTML report from existing record (no tests run)",
     )
     parser.add_argument(
-        "--fresh", action="store_true",
+        "--fresh-report", dest="fresh", action="store_true",
         help="Discard existing record and start a new batch from scratch",
     )
     parser.add_argument(
