@@ -38,6 +38,18 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(x) for x in version.split("."))
 
 
+def _normalize_golden_version(version: str) -> str:
+    """Normalize a golden version shorthand to full ``X.0.0`` format.
+
+    ``'132'`` → ``'132.0.0'``, ``'132.0'`` → ``'132.0.0'``,
+    ``'132.0.0'`` unchanged.
+    """
+    parts = version.split(".")
+    while len(parts) < 3:
+        parts.append("0")
+    return ".".join(parts[:3])
+
+
 log = logging.getLogger(__name__)
 
 
@@ -323,33 +335,77 @@ class UpgradeRunner:
     def run_upgrade_to_golden(
         self,
         from_version: Optional[str] = None,
+        golden_version: Optional[str] = None,
         dot: bool = False,
         invite_email: Optional[str] = None,
     ) -> UpgradeResult:
         """
-        Scenario: Ensure client is installed, enable auto-upgrade to the
-        latest golden release, wait and verify.
+        Scenario: Ensure client is installed, enable auto-upgrade to a
+        golden release, wait and verify.
 
         :param from_version: Build version for download fallback. If None,
                              auto-picks a version older than the target golden.
+        :param golden_version: Specific golden version to target (e.g.
+                               ``'132'`` or ``'132.0.0'``). If None, the
+                               latest golden version from the tenant is used.
         :param dot: If True, enable dot release within the golden version.
         :param invite_email: Email to send enrollment invite before install.
         :return: UpgradeResult with outcome details.
         """
-        scenario = f"upgrade_to_golden(dot={dot})"
+        scenario_label = golden_version or "latest"
+        scenario = f"upgrade_to_golden({scenario_label}, dot={dot})"
         start_time = time.time()
         log.info("=" * 70)
         log.info("SCENARIO: Upgrade to Golden Release")
         log.info("  config_name: %s", self.config_name or "(default)")
-        log.info("  dot: %s, from_version: %s", dot, from_version)
+        log.info(
+            "  golden_version: %s, dot: %s, from_version: %s",
+            golden_version or "(latest)", dot, from_version,
+        )
         log.info("=" * 70)
         try:
-            # Resolve latest golden version for auto-pick before install
+            # Resolve golden version
             all_versions = self.webui.get_release_versions()
-            golden_versions_sorted = sorted(
-                all_versions["goldenversions"], key=_version_key,
+            available_golden = sorted(
+                all_versions.get("goldenversions", []),
+                key=_version_key,
             )
-            golden_version = golden_versions_sorted[-1]
+            if not available_golden:
+                return UpgradeResult(
+                    success=False,
+                    scenario=scenario,
+                    version_before="unknown",
+                    version_after="unknown",
+                    expected_version="unknown",
+                    webui_version="",
+                    elapsed_seconds=time.time() - start_time,
+                    message="No golden versions available on the tenant",
+                    service_running=False,
+                    critical_failure=True,
+                )
+
+            if golden_version is not None:
+                golden_version = _normalize_golden_version(golden_version)
+                if golden_version not in available_golden:
+                    avail_str = ", ".join(available_golden)
+                    return UpgradeResult(
+                        success=False,
+                        scenario=scenario,
+                        version_before="unknown",
+                        version_after="unknown",
+                        expected_version="unknown",
+                        webui_version="",
+                        elapsed_seconds=time.time() - start_time,
+                        message=(
+                            f"Golden version {golden_version} not found "
+                            f"on tenant. Available: {avail_str}"
+                        ),
+                        service_running=False,
+                        critical_failure=True,
+                    )
+            else:
+                golden_version = available_golden[-1]
+
             log.info("Selected golden version: %s", golden_version)
 
             # Auto-pick from_version for download fallback if not provided

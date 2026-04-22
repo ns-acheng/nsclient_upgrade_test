@@ -42,17 +42,17 @@ mocked.
 Use `upgrade` for the main test flow:
 
 ```bash
-# Most common
+# Latest release
 python main.py upgrade --target latest
 
-# Golden channel
+# Latest golden release (base build)
 python main.py upgrade --target golden
 
-# Golden + dot release
-python main.py upgrade --target golden-dot --email user@example.com
+# Specific golden version with dot release
+python main.py upgrade --target golden --golden-version 132 --dot
 
-# Local MSI upgrade
-python main.py upgrade --target local --simulate --email user@example.com
+# Local MSI upgrade (from data/upgrade_version/)
+python main.py upgrade --target local --email user@example.com
 ```
 
 All upgrade scenarios and options are documented below in **Run Upgrade Scenarios**.
@@ -128,7 +128,7 @@ manual paste prompt:
 
 ```bash
 python main.py upgrade --target latest --email user@example.com
-python main.py upgrade --target golden-dot --email user@example.com
+python main.py upgrade --target golden --golden-version 132 --dot --email user@example.com
 ```
 
 Chrome handling:
@@ -150,21 +150,44 @@ python main.py upgrade --target latest --source-64bit --target-64bit
 python main.py upgrade --target latest --target-64bit
 ```
 
-#### Upgrade to latest golden release (base version only)
+#### Upgrade to golden release (`--target golden`)
+
+Upgrades to any golden channel version. By default the latest golden version
+on the tenant is used. Use `--golden-version` to target a specific version,
+and `--dot` to upgrade to the latest dot release within that golden version.
 
 ```bash
+# Latest golden — base build only
 python main.py upgrade --target golden
+
+# Latest golden — with dot release
+python main.py upgrade --target golden --dot
+
+# Specific golden version 132 — base build only
+python main.py upgrade --target golden --golden-version 132
+
+# Specific golden version 132 — with dot release
+python main.py upgrade --target golden --golden-version 132 --dot
+
+# Full version string also accepted
+python main.py upgrade --target golden --golden-version 132.0.0 --dot
+
+# 64-bit upgrade to golden 135
+python main.py upgrade --target golden --golden-version 135 --target-64bit
 ```
 
-#### Upgrade to latest golden with dot release
-
-```bash
-python main.py upgrade --target golden-dot
-```
+`--golden-version` accepts either short form (`132`) or full form (`132.0.0`).
+If the specified version is not available on the tenant, the tool fails
+immediately and lists all available golden versions.
 
 #### Upgrade from local MSI (`--target local`)
 
-Use local installer files from `data/upgrade_version/`:
+Installs the base client, then immediately upgrades it using local MSI files
+from `data/upgrade_version/`. No tenant WebUI upgrade config is needed — the
+upgrade is triggered directly by `msiexec`. The timing monitor starts at the
+same time as the MSI install so all lifecycle events are captured.
+
+Place the upgrade MSI(s) in `data/upgrade_version/` before running:
 
 ```
 data/upgrade_version/
@@ -172,24 +195,35 @@ data/upgrade_version/
   stagent64.msi    <-- 64-bit upgrade MSI
 ```
 
-Examples:
+The correct file is chosen automatically based on `--target-64bit`.
 
 ```bash
-# Local MSI upgrade
+# 32-bit upgrade (uses stagent.msi)
+python main.py upgrade --target local
+
+# 64-bit upgrade (uses stagent64.msi)
+python main.py upgrade --target local --target-64bit
+
+# With email invite for base install token
 python main.py upgrade --target local --email user@example.com
 
-# Local MSI upgrade with simulation pre-actions
-python main.py upgrade --target local --simulate --email user@example.com
+# With reboot at timing 6
+python main.py upgrade --target local --target-64bit --reboottime 6
+
+# With simulation pre-actions (see below)
+python main.py upgrade --target local --simulate
 ```
 
-When `--simulate` is set (local target only), the tool performs these
-actions immediately before executing the local upgrade MSI:
+**Expected version** is read from the MSI's Subject field (Windows Installer
+summary info) so no `--from-version` is needed for the upgrade target.
 
-1. Set registry DWORD value
-  `HKLM\SOFTWARE\Netskope\UpgradeInProgress = 1`
+When `--simulate` is set, the tool performs these actions immediately before
+executing the upgrade MSI:
+
+1. Set registry DWORD `HKLM\SOFTWARE\Netskope\UpgradeInProgress = 1`
 2. Update `C:\ProgramData\netskope\stagent\nsconfig.json` (root `cache` node):
-  - `cache.lastClientUpdated = "1"`
-  - `cache.newClientVer = "137.0.0.2222"`
+   - `cache.lastClientUpdated = "1"`
+   - `cache.newClientVer = "137.0.0.2222"`
 
 #### Upgrade with timing monitor
 
@@ -489,14 +523,16 @@ so the same email always gets the same profile across runs.
 
 | Option | Description |
 | --- | --- |
-| `--target` | **Required** (upgrade only). `latest`, `golden`, `golden-dot`, or `local` |
+| `--target` | **Required** (upgrade only). `latest`, `golden`, or `local` |
+| `--golden-version N` | Golden version to target, e.g. `132` or `132.0.0`. Defaults to latest golden. Only used with `--target golden` |
+| `--dot` | Upgrade to the latest dot release within the golden version. Only used with `--target golden` |
 | `--from-version` | Build version for download fallback (e.g. `123.0.0`) |
 | `--source-64bit` | Source (base) install is 64-bit |
 | `--target-64bit` | Upgrade target is 64-bit |
 | `--email` | Send enrollment email invite before upgrade |
 | `--reboottime N` | Timing number (1-13) that triggers a reboot during upgrade |
 | `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
-| `--simulate` | Local-target only (`--target local`): set `HKLM\\SOFTWARE\\Netskope\\UpgradeInProgress` DWORD=1 and update `nsconfig.json` cache (`lastClientUpdated=\"1\"`, `newClientVer=\"137.0.0.2222\"`) before local MSI install |
+| `--simulate` | Local-target only: set `HKLM\SOFTWARE\Netskope\UpgradeInProgress` DWORD=1 and update `nsconfig.json` cache before local MSI install |
 
 
 ## Unit Tests

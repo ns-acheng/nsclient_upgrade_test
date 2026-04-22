@@ -8,7 +8,8 @@ Then just run (uses saved password automatically):
     python main.py versions
     python main.py upgrade --target latest
     python main.py upgrade --target golden
-    python main.py upgrade --target golden-dot --email acheng@netskope.com
+    python main.py upgrade --target golden --golden-version 132 --dot
+    python main.py upgrade --target local --email acheng@netskope.com
     python main.py disable-upgrade
 """
 
@@ -68,7 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  nsclient_upgrade upgrade --target latest\n"
             "  nsclient_upgrade upgrade --target golden\n"
-            "  nsclient_upgrade upgrade --target golden-dot --email acheng@netskope.com\n"
+            "  nsclient_upgrade upgrade --target golden --golden-version 132 --dot\n"
+            "  nsclient_upgrade upgrade --target local --email acheng@netskope.com\n"
             "  nsclient_upgrade setup\n"
             "  nsclient_upgrade versions\n"
             "  nsclient_upgrade status\n"
@@ -111,12 +113,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument(
         "--target", required=True,
-        choices=["latest", "golden", "golden-dot", "local"],
+        choices=["latest", "golden", "local"],
         help=(
-            "Upgrade target: latest, golden (base only), golden-dot "
-            "(with dot release), or local (install from "
-            "data/upgrade_version/stagent[64].msi)"
+            "Upgrade target: latest, golden, or local "
+            "(install from data/upgrade_version/stagent[64].msi)"
         ),
+    )
+    upgrade_parser.add_argument(
+        "--golden-version", dest="golden_version", type=str, default=None,
+        help=(
+            "Golden version to upgrade to (e.g. 132 or 132.0.0). "
+            "Defaults to the latest golden. Only used with --target golden"
+        ),
+    )
+    upgrade_parser.add_argument(
+        "--dot", action="store_true",
+        help="Enable dot release within the golden version (--target golden only)",
     )
     upgrade_parser.add_argument(
         "--from-version", type=str, default=None,
@@ -716,10 +728,11 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
             from_version=args.from_version, invite_email=args.email,
         )
 
-    elif args.target in ("golden", "golden-dot"):
+    elif args.target == "golden":
         result = runner.run_upgrade_to_golden(
             from_version=args.from_version,
-            dot=(args.target == "golden-dot"),
+            golden_version=args.golden_version,
+            dot=args.dot,
             invite_email=args.email,
         )
 
