@@ -845,6 +845,8 @@ def _print_result(result: UpgradeResult) -> None:
                 lines.append(f"    Watchdog mon:    [FAIL] stAgentSvcMon.exe MISSING")
             elif mon_ver:
                 lines.append(f"    Watchdog mon:    [FAIL] stAgentSvcMon.exe version {mon_ver}, {mon_proc}")
+            elif exe.watchdog_duplicate:
+                lines.append(f"    Watchdog mon:    [FAIL] {exe.watchdog_duplicate}")
             else:
                 mon_path = Path(exe.install_dir) / "stAgentSvcMon.exe"
                 ver = LocalClient.get_file_version(mon_path) if mon_path.is_file() else ""

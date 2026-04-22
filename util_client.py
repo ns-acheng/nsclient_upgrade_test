@@ -1030,6 +1030,10 @@ class LocalClient:
             else:
                 log.warning("stwatchdog service is NOT running")
 
+            stwatchdog_binpath = LocalClient.query_service_binpath(
+                "stwatchdog"
+            ).lower()
+
             # In watchdog mode there must be exactly one
             # stAgentSvcMon.exe running with the "-watchdog" arg.
             mon_instances = LocalClient.get_process_instances(
@@ -1049,17 +1053,25 @@ class LocalClient:
                 log.warning(watchdog_duplicate)
             else:
                 pid, cmdline = mon_instances[0]
-                if "-watchdog" not in cmdline.lower():
+                cmdline_lower = cmdline.lower().strip()
+                if "-watchdog" in cmdline_lower:
+                    log.info(
+                        "%s running as -watchdog (PID %d)",
+                        WATCHDOG_EXECUTABLE, pid,
+                    )
+                elif "-watchdog" in stwatchdog_binpath:
+                    log.info(
+                        "%s watchdog mode confirmed via stwatchdog "
+                        "service binpath (PID %d)",
+                        WATCHDOG_EXECUTABLE,
+                        pid,
+                    )
+                else:
                     watchdog_duplicate = (
                         f"{WATCHDOG_EXECUTABLE} (PID {pid}) not "
                         f"running as -watchdog: {cmdline}"
                     )
                     log.warning(watchdog_duplicate)
-                else:
-                    log.info(
-                        "%s running as -watchdog (PID %d)",
-                        WATCHDOG_EXECUTABLE, pid,
-                    )
 
         valid = (
             len(missing) == 0

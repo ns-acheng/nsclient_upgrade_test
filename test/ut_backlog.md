@@ -4,6 +4,9 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 
 ## test_util_client.py
 
+- **watchdog command-line fallback via service binpath**: In watchdog mode, mock `get_process_instances()` to return one `stAgentSvcMon.exe` PID with an empty command line, `query_service_binpath("stwatchdog")` to include `-watchdog`, and `is_service_running("stwatchdog")` to return True; verify `verify_executables()` treats the monitor as valid.
+- **watchdog command-line mismatch still fails**: In watchdog mode, mock one `stAgentSvcMon.exe` PID with a non-`-watchdog` command line and a `stwatchdog` binpath without `-watchdog`; verify `watchdog_duplicate` is populated and `valid` is False.
+
 - **_collect_event_logs success**: Mock `subprocess.run` returning exit code 0 for both System and Application channels; verify `wevtutil.exe epl <channel> <file>` is called and success is logged.
 - **_collect_event_logs failure**: Mock `subprocess.run` returning non-zero exit code; verify a warning is logged and no exception is raised.
 - **_collect_event_logs exception**: Mock `subprocess.run` raising `Exception`; verify warning is logged and no exception propagates.
@@ -89,3 +92,7 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 - **monitor/install concurrency**: Verify monitor starts before install worker runs and reboot timings can still be observed.
 - **registry write helper success**: `LocalClient.set_upgrade_in_progress()` creates/sets HKLM key default DWORD to 1.
 - **registry write helper failure**: Registry exceptions raise `RuntimeError` with clear context.
+
+## test_main.py — watchdog summary rendering
+
+- **watchdog summary reflects validator failure**: When `ExeValidationResult.watchdog_duplicate` is set, verify `_print_result()` shows `Watchdog mon: [FAIL] ...` instead of a misleading pass line.
