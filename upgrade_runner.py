@@ -928,6 +928,36 @@ class UpgradeRunner:
                                 "watchdog mode"
                             )
 
+                        # In simulate mode, pause 5s and check monitor service
+                        # status. Log the result but don't block msiexec.
+                        if self._simulate_upgrade and not self._watchdog_mode:
+                            log.info(
+                                "--simulate: waiting 5s for monitor service "
+                                "to stabilize..."
+                            )
+                            time.sleep(5)
+                            try:
+                                mon_running = LocalClient.is_service_running(
+                                    "stagentsvcmon"
+                                )
+                                if mon_running:
+                                    log.info(
+                                        "--simulate: monitor service "
+                                        "stagentsvcmon is running"
+                                    )
+                                else:
+                                    log.warning(
+                                        "--simulate: monitor service "
+                                        "stagentsvcmon is NOT running "
+                                        "(continuing anyway)"
+                                    )
+                            except Exception as mon_check_exc:
+                                log.warning(
+                                    "--simulate: could not check monitor "
+                                    "service status: %s (continuing anyway)",
+                                    mon_check_exc,
+                                )
+
                     # Always write /l*v+ output to the scenario test folder.
                     # If for any reason _log_dir is missing, create a
                     # workspace-local fallback folder under log/.
