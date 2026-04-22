@@ -1373,8 +1373,7 @@ class LocalClient:
 
         Actions (idempotent):
         1. Clone ``stAgentSvc.exe`` to ``stAgentSvcMon.exe`` if missing.
-        2. Ensure Windows service ``stagentsvcmon`` exists with
-           ``stAgentSvcMon.exe -monitor`` binpath.
+        2. Delete any stale ``stagentsvcmon`` service, then recreate it fresh.
         3. Start the service if not already running.
 
         :param is_64_bit: Install arch used to resolve STAgent directory.
@@ -1395,37 +1394,50 @@ class LocalClient:
             log.info("Cloned monitor executable: %s -> %s", src_exe, mon_exe)
 
         cmdline = f'"{mon_exe}" -monitor'
-        svc_info = LocalClient.query_service(service_name)
 
+        # Always delete any stale service entry before creating fresh.
+        # A leftover service from a previous test run may be in a bad state
+        # (wrong binpath, pending deletion, or pointing to a stale exe path).
+        svc_info = LocalClient.query_service(service_name)
         if svc_info.exists:
-            binpath = LocalClient.query_service_binpath(service_name)
-            if "stagentsvcmon.exe" not in binpath.lower():
+            log.info("Stale service %s found — stopping and deleting before recreate", service_name)
+            # Best-effort stop; ignore errors (service may already be stopped)
+            subprocess.run(
+                ["sc", "stop", service_name],
+                capture_output=True, text=True, timeout=15,
+            )
+            del_result = subprocess.run(
+                ["sc", "delete", service_name],
+                capture_output=True, text=True, timeout=15,
+            )
+            if del_result.returncode != 0:
                 log.warning(
-                    "Service %s already exists with unexpected binpath: %s",
+                    "Could not delete stale service %s (may be pending deletion): %s",
                     service_name,
-                    binpath,
+                    del_result.stdout.strip() or del_result.stderr.strip(),
                 )
             else:
-                log.info("Service %s already exists", service_name)
-        else:
-            result = subprocess.run(
-                [
-                    "sc",
-                    "create",
-                    service_name,
-                    f"binPath= {cmdline}",
-                    "start= demand",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
+                log.info("Deleted stale service %s", service_name)
+
+        # NOTE: sc.exe uses a custom command-line parser that requires key= and
+        # value to be separate argv tokens.  Passing "start= demand" as a single
+        # element causes Python to quote it, which breaks sc's parser.
+        result = subprocess.run(
+            [
+                "sc", "create", service_name,
+                "binPath=", cmdline,
+                "start=", "demand",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Failed to create service "
+                f"{service_name}: {result.stderr.strip() or result.stdout.strip()}"
             )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    "Failed to create service "
-                    f"{service_name}: {result.stderr.strip() or result.stdout.strip()}"
-                )
-            log.info("Created service %s with binpath: %s", service_name, cmdline)
+        log.info("Created service %s with binpath: %s", service_name, cmdline)
 
         svc_info = LocalClient.query_service(service_name)
         if svc_info.state.upper() == "RUNNING":
