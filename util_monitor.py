@@ -649,7 +649,6 @@ class TimingMonitor:
         if reboot_triggered:
             lines.append(f"  Reboot triggered at timing {reboot_time}")
         report = "\n".join(lines)
-        print(f"\n{report}\n")
         log.info("Timing report:\n%s", report)
 
     @property
