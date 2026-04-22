@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 
 
 EMAIL_FETCH_MAX_RETRIES = 2
+TOKEN_ACCEPT_WAIT_SECONDS = 8
 
 
 def resolve_email_profile(
@@ -258,8 +259,11 @@ class InstallerManager:
 
         # Wait for the tenant to register the token before installing
         if installer_name:
-            log.info("Waiting 15s for tenant to accept the token")
-            time.sleep(15)
+            log.info(
+                "Waiting %ss for tenant to accept the token",
+                TOKEN_ACCEPT_WAIT_SECONDS,
+            )
+            time.sleep(TOKEN_ACCEPT_WAIT_SECONDS)
 
         # Install with msiexec (retry on 1603 with next email)
         self._install_msi_with_email_retry(
@@ -518,8 +522,11 @@ class InstallerManager:
         self._cloned_installer = new_installer
 
         # Wait for the tenant to register the new token
-        log.info("Waiting 15s for tenant to accept the token")
-        time.sleep(15)
+        log.info(
+            "Waiting %ss for tenant to accept the token",
+            TOKEN_ACCEPT_WAIT_SECONDS,
+        )
+        time.sleep(TOKEN_ACCEPT_WAIT_SECONDS)
 
         self.client.install_msi(
             str(new_installer), log_dir=self.log_dir,
