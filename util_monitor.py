@@ -891,8 +891,8 @@ class TimingMonitor:
         After this method returns the monitor thread continues polling
         normally — no state file is saved and no scheduled task is created.
 
-        Requires ``C:\\git\\stress_test`` (or equivalent) on PYTHONPATH so
-        that ``tool.power_api`` can be imported.
+        Automatically adds ``C:\\git\\stress_test`` to ``sys.path`` if needed
+        so that ``tool.power_api`` can be imported without pre-configuring PYTHONPATH.
 
         :param elapsed: Seconds elapsed since monitor start (for logging).
         """
@@ -907,6 +907,9 @@ class TimingMonitor:
             self._state.reboot_time, level, level.upper(), STANDBY_WAKE_SECONDS,
         )
         try:
+            _STRESS_TEST_PATH = r"C:\git\stress_test"
+            if _STRESS_TEST_PATH not in sys.path:
+                sys.path.insert(0, _STRESS_TEST_PATH)
             from tool.power_api import enter_s0_and_wake, enter_s1_and_wake
 
             if level == "s0":
@@ -928,8 +931,8 @@ class TimingMonitor:
                 )
         except ImportError:
             log.error(
-                "Cannot import tool.power_api — add C:\\git\\stress_test "
-                "to PYTHONPATH. Standby skipped."
+                "Cannot import tool.power_api from C:\\git\\stress_test — "
+                "ensure the stress_test repo exists at that path. Standby skipped."
             )
         except Exception as exc:
             log.error(

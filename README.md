@@ -14,6 +14,8 @@ Primary workflow: run upgrade scenarios with `python main.py upgrade --target ..
 - `pylark-webapi-lib` — Netskope internal WebUI API library (not included)
 - `nsclient` — Netskope Client library (required for `status` and `upgrade`)
 - `selenium` — For Gmail email auto-extraction (auto-installed via requirements.txt)
+- `tool.power_api` — Required only for `--standby` (S0/S1 sleep). Part of the
+  `stress_test` repo at `C:\git\stress_test`. Must be importable on `PYTHONPATH`.
 
 ## Installation
 
@@ -27,7 +29,7 @@ This tool depends on `pylark-webapi-lib` for tenant WebUI API calls. It must be
 installed separately. Clone the repo and install it:
 
 ```bash
-git clone [<pylark-webapi-lib repo URL>](https://github.com/netskope-qe/pylark-webapi-lib)
+git clone https://github.com/netskope-qe/pylark-webapi-lib
 pip install -e /path/to/pylark-webapi-lib
 ```
 
@@ -263,6 +265,32 @@ When `--reboottime` triggers a reboot, the tool saves monitor state to
 `data/monitor_state.json` and creates a scheduled task to run
 `python main.py continue` immediately after user logon. The `continue` command
 resumes monitoring, prints the final timing report, and cleans up.
+
+#### Standby instead of reboot (`--standby`)
+
+Use `--standby s0` or `--standby s1` together with `--reboottime` to enter a
+low-power sleep state instead of rebooting when the timing fires:
+
+```bash
+# Enter S1 sleep when timing 6 fires, wake after 30 seconds
+python main.py upgrade --target latest --reboottime 6 --standby s1
+
+# Enter S0 modern standby when timing 8 fires
+python main.py upgrade --target latest --reboottime 8 --standby s0
+
+# 64-bit upgrade with S1 standby at timing 5
+python main.py upgrade --target latest --source-64bit --target-64bit --reboottime 5 --standby s1
+```
+
+Behavior differences from `--reboottime` without `--standby`:
+
+- The machine enters sleep (`s0` = modern standby / connected standby,
+  `s1` = S1 sleep) and wakes automatically after **30 seconds**.
+- The tool process does **not** exit — it stays alive through the sleep/wake
+  cycle and resumes monitoring immediately on wake.
+- No scheduled task is created (the `continue` command is not needed).
+- The timing monitor captures events both before and after the sleep/wake.
+- Requires `tool.power_api` from `C:\git\stress_test` (see **Requirements**).
 
 #### Upgrade with extra action
 These actions can be take during reboot:
@@ -530,8 +558,9 @@ so the same email always gets the same profile across runs.
 | `--source-64bit` | Source (base) install is 64-bit |
 | `--target-64bit` | Upgrade target is 64-bit |
 | `--email` | Send enrollment email invite before upgrade |
-| `--reboottime N` | Timing number (1-13) that triggers a reboot during upgrade |
+| `--reboottime N` | Timing number (1-13) that triggers a reboot (or standby) during upgrade |
 | `--rebootdelay N` | Seconds to wait after timing fires before rebooting (default: 5) |
+| `--standby MODE` | Enter sleep instead of rebooting when timing fires. `s0` = modern standby, `s1` = S1 sleep. Machine wakes automatically after 30 s. Requires `tool.power_api`. |
 | `--simulate` | Local-target only: set `HKLM\SOFTWARE\Netskope\UpgradeInProgress` DWORD=1 and update `nsconfig.json` cache before local MSI install |
 
 
