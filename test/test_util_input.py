@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from util_input import start_input_monitor
+from util_input import start_input_monitor, prompt_password
 
 
 class TestInputMonitor:
@@ -72,3 +72,22 @@ class TestInputMonitor:
         start_input_monitor(stop_event)
         time.sleep(0.3)
         assert stop_event.is_set()
+
+
+# ── prompt_password ──────────────────────────────────────────────────
+
+
+class TestPromptPassword:
+    """Tests for prompt_password() — no terminal I/O."""
+
+    @patch("getpass.getpass", return_value="")
+    def test_prompt_includes_label(self, mock_getpass: MagicMock) -> None:
+        """getpass is called with the label indented and colon-terminated."""
+        prompt_password("Enter password")
+        mock_getpass.assert_called_once_with("  Enter password: ")
+
+    @patch("getpass.getpass", return_value="secret123")
+    def test_returns_password(self, mock_getpass: MagicMock) -> None:
+        """Return value from getpass is passed through unchanged."""
+        result = prompt_password("Password")
+        assert result == "secret123"

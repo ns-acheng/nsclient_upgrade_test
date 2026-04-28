@@ -12,7 +12,7 @@ import pytest
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from util_webui import WebUIClient
+from util_webui import WebUIClient, _is_connection_error
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -431,3 +431,51 @@ class TestEmailInvite:
         client = WebUIClient()
         with pytest.raises(RuntimeError, match="Not connected"):
             client.send_email_invite("user@example.com")
+
+
+# ── _is_connection_error ─────────────────────────────────────────────
+
+
+class TestIsConnectionError:
+    """Tests for the _is_connection_error() helper — no I/O needed."""
+
+    def test_auth_timeout_returns_false(self) -> None:
+        """TimeoutError whose message contains auth text is NOT a connection error."""
+        exc = TimeoutError("Login timed out after 60s — invalid username or password")
+        assert _is_connection_error(exc) is False
+
+    def test_connection_error_returns_true(self) -> None:
+        """Direct ConnectionError instance is always retriable."""
+        assert _is_connection_error(ConnectionError("network down")) is True
+
+    def test_timeout_error_returns_true(self) -> None:
+        """TimeoutError without auth text is a retriable connection error."""
+        assert _is_connection_error(TimeoutError("socket timed out")) is True
+
+    def test_os_error_returns_true(self) -> None:
+        """OSError (e.g. connection refused) is retriable."""
+        assert _is_connection_error(OSError("connection refused")) is True
+
+    def test_hint_connection_in_message(self) -> None:
+        """Exception whose message contains 'connection' is retriable."""
+        assert _is_connection_error(Exception("SSL connection reset")) is True
+
+    def test_hint_timed_out_in_message(self) -> None:
+        """Exception whose message contains 'timed out' is retriable."""
+        assert _is_connection_error(Exception("request timed out")) is True
+
+    def test_hint_timeout_in_message(self) -> None:
+        """Exception whose message contains 'timeout' is retriable."""
+        assert _is_connection_error(Exception("read timeout exceeded")) is True
+
+    def test_hint_maxretryerror_in_message(self) -> None:
+        """Exception whose message contains 'maxretryerror' (case-insensitive) is retriable."""
+        assert _is_connection_error(Exception("MaxRetryError exceeded")) is True
+
+    def test_generic_error_returns_false(self) -> None:
+        """ValueError with no recognised hint is NOT a connection error."""
+        assert _is_connection_error(ValueError("bad field")) is False
+
+    def test_runtime_error_returns_false(self) -> None:
+        """RuntimeError with no recognised hint is NOT a connection error."""
+        assert _is_connection_error(RuntimeError("server returned 500")) is False
