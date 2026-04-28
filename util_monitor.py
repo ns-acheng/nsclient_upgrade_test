@@ -127,6 +127,10 @@ class MonitorState:
     standby: Optional[str] = None
     standby_triggered: bool = False
 
+    # Track whether scheduled task was created (only for reboot mode).
+    # In standby mode, no task is created since monitor survives wake.
+    task_created: bool = False
+
 
 # ── State persistence ────────────────────────────────────────────────
 
@@ -430,6 +434,19 @@ class TimingMonitor:
         """Take baseline snapshots and launch the monitor thread."""
         if self._state.initial_svc_pid is None and not self._state.timings:
             self._take_baselines()
+
+        # Defensive cleanup: in standby mode, delete any lingering
+        # scheduled task from a prior run (e.g., user error or failed cleanup).
+        # This prevents two monitor processes from running simultaneously after wake.
+        if self._standby:
+            try:
+                delete_continue_task()
+                log.info(
+                    "Standby mode: cleaned up any pre-existing scheduled task"
+                )
+            except Exception as exc:
+                log.debug("Could not delete pre-existing task: %s", exc)
+
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="timing-monitor",
         )
@@ -800,13 +817,21 @@ class TimingMonitor:
             self._state.pre_reboot_elapsed = elapsed
         save_monitor_state(self._state)
 
+        # Only create task for reboot mode. In standby mode, the monitor
+        # process survives the sleep/wake cycle and continues directly.
         if self._skip_continue_task:
             log.info(
                 "Skipping NsClientMonitorContinue task (batch mode — "
                 "NsClientBatchContinue handles post-reboot continuation)"
             )
+        elif self._standby:
+            log.info(
+                "Skipping NsClientMonitorContinue task (standby mode — "
+                "monitor process resumes directly on wake, no reboot)"
+            )
         else:
             create_continue_task()
+            self._state.task_created = True
 
         action = self._state.reboot_action
 

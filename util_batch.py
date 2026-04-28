@@ -13,7 +13,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -411,3 +411,159 @@ def _build_table_rows(tests: list[TestRun]) -> str:
             f"</tr>"
         )
     return "\n".join(rows)
+
+
+# ── Result helpers (shared with main.py and batch runner) ────────────
+
+# Flags to strip when normalising manual argv against batch test args.
+_STRIP_FLAGS_WITH_VAL = frozenset({
+    "--config", "--tenant", "--username", "--password", "--result-file",
+})
+_STRIP_FLAGS_BOOL = frozenset({"-v", "--verbose"})
+
+
+def normalize_argv(tokens: list[str]) -> frozenset[str]:
+    """
+    Strip meta-flags from argv tokens and return a frozenset for
+    order-insensitive comparison against batch test arg sets.
+    """
+    out: list[str] = []
+    skip_next = False
+    for tok in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in _STRIP_FLAGS_WITH_VAL:
+            skip_next = True
+            continue
+        if tok in _STRIP_FLAGS_BOOL:
+            continue
+        out.append(tok)
+    return frozenset(out)
+
+
+def write_result_json(
+    result: Any,
+    log_dir: Optional[Path],
+    path: str,
+    started_at: str = "",
+) -> None:
+    """
+    Write an UpgradeResult as JSON for the batch runner.
+
+    :param result: UpgradeResult to serialize.
+    :param log_dir: The scenario log directory (may be None).
+    :param path: File path to write.
+    :param started_at: ISO timestamp when the test started.
+    """
+    data = {
+        "success": result.success,
+        "critical_failure": result.critical_failure,
+        "scenario": result.scenario,
+        "version_before": result.version_before,
+        "version_after": result.version_after,
+        "expected_version": result.expected_version,
+        "webui_version": result.webui_version,
+        "elapsed_seconds": result.elapsed_seconds,
+        "message": result.message,
+        "log_dir": str(log_dir) if log_dir else "",
+        "started_at": started_at,
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        log.info("Result written to %s", path)
+    except Exception as exc:
+        log.warning("Failed to write result file: %s", exc)
+
+
+def try_record_manual_result(
+    result: Any,
+    log_dir: Optional[Path],
+    argv: list[str],
+    started_at: str = "",
+) -> None:
+    """
+    If a batch record exists and *argv* matches a recordable test, update
+    that test with the result.  Silently skips if no record or no match.
+
+    For success results: updates any matching test.
+    For failure/critical-failure results: updates a matching test only if
+    the test is pending, or if the test is already failed but has no
+    Before/After/Log information yet.
+
+    Matching is order-insensitive: argv tokens are normalised to a
+    frozenset and compared against each test's full args frozenset.
+
+    :param result: UpgradeResult from this run.
+    :param log_dir: Scenario log directory.
+    :param argv: sys.argv[1:] from this invocation.
+    :param started_at: ISO timestamp when the run started.
+    """
+    try:
+        # Route --target local runs to the dedicated local batch files.
+        is_local_target = False
+        try:
+            tidx = argv.index("--target")
+            if tidx + 1 < len(argv) and argv[tidx + 1] == "local":
+                is_local_target = True
+        except (ValueError, IndexError):
+            pass
+
+        batch_json = BATCH_LOCAL_JSON if is_local_target else BATCH_JSON
+        batch_record_json = (
+            BATCH_RECORD_LOCAL_JSON if is_local_target else BATCH_RECORD_JSON
+        )
+        report_html = batch_record_json.parent / (
+            "batch_report_local.html" if is_local_target else "batch_report.html"
+        )
+
+        record = load_record(batch_record_json)
+        if record is None:
+            if not batch_json.exists():
+                return
+            base_args, tests = load_batch_config(batch_json)
+            record = create_record(base_args, tests)
+            log.info("Created batch record from %s", batch_json)
+
+        manual_set = normalize_argv(argv)
+        is_failure = not result.success
+
+        for test in record.tests:
+            full = (record.base_args + " " + test.extra_args).strip()
+            batch_set = normalize_argv(shlex.split(full, posix=False))
+            if batch_set != manual_set:
+                continue
+
+            # For failure results: only update if test is pending, or if
+            # test is already failed with no Before/After/Log info.
+            if is_failure:
+                is_empty_fail = (
+                    test.status == "fail"
+                    and not test.version_before
+                    and not test.version_after
+                    and not test.log_dir
+                )
+                if test.status != "pending" and not is_empty_fail:
+                    continue
+
+            apply_result_to_test(test, {
+                "success": result.success,
+                "critical_failure": result.critical_failure,
+                "log_dir": str(log_dir) if log_dir else "",
+                "version_before": result.version_before,
+                "version_after": result.version_after,
+                "expected_version": result.expected_version,
+                "elapsed_seconds": result.elapsed_seconds,
+                "message": result.message,
+                "started_at": started_at,
+                "finished_at": datetime.now().isoformat(timespec="seconds"),
+            })
+            save_record(record, batch_record_json)
+            generate_html_report(record, report_html)
+            log.info("Manual result mapped to batch test [%s]", test.id)
+            return
+    except Exception as exc:
+        log.debug("Could not map manual result to batch record: %s", exc)

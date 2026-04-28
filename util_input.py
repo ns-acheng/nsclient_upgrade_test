@@ -75,3 +75,9 @@ def _start_unix_monitor(stop_event: threading.Event) -> None:
 
     t = threading.Thread(target=_monitor, daemon=True)
     t.start()
+
+
+def prompt_password(label: str) -> str:
+    """Prompt for a password without echoing input."""
+    import getpass
+    return getpass.getpass(f"  {label}: ")

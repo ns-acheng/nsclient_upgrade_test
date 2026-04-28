@@ -8,6 +8,7 @@ imported without webapi installed (e.g. during testing or --help).
 
 import logging
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -322,3 +323,30 @@ class WebUIClient:
         )
         log.info("WebUI reports device version: %s (host=%s)", version, host_name)
         return version
+
+
+# ── Connection / Auth helpers ────────────────────────────────────────
+
+MAX_LOGIN_ATTEMPTS = 3
+MAX_CONNECT_RETRIES = 5
+CONNECT_RETRY_DELAY = 10  # seconds between connection retries
+
+# Connection-level exceptions worth retrying (network/timeout issues)
+_RETRIABLE_TYPES = (
+    ConnectionError, TimeoutError, OSError,
+)
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """Return True if the exception is a retriable connection/network error."""
+    exc_str = str(exc).lower()
+    # Auth errors wrapped in TimeoutError (from login thread) are NOT
+    # connection errors — they should go through the auth retry path.
+    if "invalid username or password" in exc_str:
+        return False
+    if isinstance(exc, _RETRIABLE_TYPES):
+        return True
+    # requests wraps urllib3 errors as ConnectionError
+    return any(hint in exc_str for hint in (
+        "connection", "timed out", "timeout", "maxretryerror",
+    ))

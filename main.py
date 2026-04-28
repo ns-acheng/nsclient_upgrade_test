@@ -26,39 +26,102 @@ from pathlib import Path
 from util_config import load_config, save_config, validate_config, ToolConfig
 from util_log import LOG_DIR, setup_logging, setup_folder_logging
 from util_secret import load_password, save_password, clear_password, cleanup_legacy_file
-from util_webui import WebUIClient
+from util_webui import (
+    WebUIClient,
+    _is_connection_error, MAX_LOGIN_ATTEMPTS, MAX_CONNECT_RETRIES, CONNECT_RETRY_DELAY,
+)
 from util_client import LocalClient, check_driver_install_log
+from util_input import prompt_password
+from util_batch import write_result_json, try_record_manual_result
 from upgrade_runner import UpgradeRunner, UpgradeResult
 
 log = logging.getLogger(__name__)
 
-MAX_LOGIN_ATTEMPTS = 3
-MAX_CONNECT_RETRIES = 5
-CONNECT_RETRY_DELAY = 10  # seconds between connection retries
 
-# Connection-level exceptions worth retrying (network/timeout issues)
-_RETRIABLE_TYPES = (
-    ConnectionError, TimeoutError, OSError,
-)
+def connect_with_retry(
+    webui: WebUIClient,
+    cfg: ToolConfig,
+    stop_event: threading.Event | None = None,
+) -> bool:
+    """
+    Try to connect to the tenant with retry for both auth and connection errors.
 
+    - Auth failures: re-prompt password up to MAX_LOGIN_ATTEMPTS times.
+    - Connection errors (timeout, network): retry up to MAX_CONNECT_RETRIES
+      times with a delay, then abort gracefully.
+    - If *stop_event* is set (e.g. ESC pressed), abort immediately.
 
-def _is_connection_error(exc: BaseException) -> bool:
-    """Return True if the exception is a retriable connection/network error."""
-    exc_str = str(exc).lower()
-    # Auth errors wrapped in TimeoutError (from login thread) are NOT
-    # connection errors — they should go through the auth retry path.
-    if "invalid username or password" in exc_str:
-        return False
-    if isinstance(exc, _RETRIABLE_TYPES):
-        return True
-    # requests wraps urllib3 errors as ConnectionError
-    return any(hint in exc_str for hint in (
-        "connection", "timed out", "timeout", "maxretryerror",
-    ))
+    :param webui: WebUIClient instance.
+    :param cfg: ToolConfig (cfg.tenant.password is updated on retry).
+    :param stop_event: Optional event checked between retries for early abort.
+    :return: True if connected, False if all attempts failed or stopped.
+    """
+    hostname = cfg.tenant.hostname
+    username = cfg.tenant.username
+    auth_attempts = 0
+    connect_failures = 0
+
+    while auth_attempts < MAX_LOGIN_ATTEMPTS:
+        if stop_event and stop_event.is_set():
+            log.info("Stop requested — aborting connection retry")
+            return False
+
+        try:
+            webui.connect(hostname, username, cfg.tenant.password)
+            save_password(cfg.tenant.password, hostname, username)
+            return True
+        except Exception as exc:
+            if _is_connection_error(exc):
+                connect_failures += 1
+                if connect_failures >= MAX_CONNECT_RETRIES:
+                    log.error(
+                        "Connection failed after %d attempts — aborting",
+                        MAX_CONNECT_RETRIES,
+                    )
+                    print(
+                        f"\n  Connection to {hostname} failed after "
+                        f"{MAX_CONNECT_RETRIES} attempts. Check network/VPN."
+                    )
+                    return False
+                log.warning(
+                    "Connection error (%d/%d): %s — retrying in %ds",
+                    connect_failures, MAX_CONNECT_RETRIES,
+                    exc, CONNECT_RETRY_DELAY,
+                )
+                print(
+                    f"\n  Connection failed ({connect_failures}/{MAX_CONNECT_RETRIES})"
+                    f" — retrying in {CONNECT_RETRY_DELAY}s..."
+                )
+                if stop_event:
+                    stop_event.wait(CONNECT_RETRY_DELAY)
+                    if stop_event.is_set():
+                        log.info("Stop requested — aborting connection retry")
+                        return False
+                else:
+                    time.sleep(CONNECT_RETRY_DELAY)
+                continue
+
+            if "invalid username or password" not in str(exc).lower():
+                raise
+            auth_attempts += 1
+            remaining = MAX_LOGIN_ATTEMPTS - auth_attempts
+            if remaining == 0:
+                print(
+                    f"\n  Authentication failed after {MAX_LOGIN_ATTEMPTS} attempts."
+                )
+                return False
+            print(
+                f"\n  Login failed — invalid password. "
+                f"{remaining} attempt(s) remaining."
+            )
+            clear_password(hostname, username)
+            cfg.tenant.password = getpass.getpass(
+                f"  Password for {username}@{hostname}: "
+            )
+    return False
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the CLI argument parser with subcommands."""
     parser = argparse.ArgumentParser(
         prog="nsclient_upgrade",
         description=(
@@ -162,7 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
             "At --reboottime N, enter standby instead of rebooting: "
             "s0 = modern standby (Connected Standby), "
             "s1 = classic S1 sleep. "
-            "System auto-wakes after 30 s and upgrade monitoring resumes. "
+            "System auto-wakes after 30 s and upgrade monitoring resumes "
+            "directly (no scheduled task needed). "
             "Requires tool.power_api from C:\\git\\stress_test on PYTHONPATH."
         ),
     )
@@ -243,78 +307,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def connect_with_retry(webui: WebUIClient, cfg: ToolConfig,
-                       stop_event: threading.Event | None = None) -> bool:
-    """
-    Try to connect to the tenant with retry for both auth and connection errors.
-
-    - Auth failures: re-prompt password up to MAX_LOGIN_ATTEMPTS times.
-    - Connection errors (timeout, network): retry up to MAX_CONNECT_RETRIES
-      times with a delay, then abort gracefully.
-    - If *stop_event* is set (e.g. ESC pressed), abort immediately.
-
-    :param webui: WebUIClient instance.
-    :param cfg: ToolConfig (cfg.tenant.password is updated on retry).
-    :param stop_event: Optional event checked between retries for early abort.
-    :return: True if connected, False if all attempts failed or stopped.
-    """
-    hostname = cfg.tenant.hostname
-    username = cfg.tenant.username
-    auth_attempts = 0
-    connect_failures = 0
-
-    while auth_attempts < MAX_LOGIN_ATTEMPTS:
-        if stop_event and stop_event.is_set():
-            log.info("Stop requested — aborting connection retry")
-            return False
-
-        try:
-            webui.connect(hostname, username, cfg.tenant.password)
-            save_password(cfg.tenant.password, hostname, username)
-            return True
-        except Exception as exc:
-            if _is_connection_error(exc):
-                connect_failures += 1
-                if connect_failures >= MAX_CONNECT_RETRIES:
-                    log.error("Connection failed after %d attempts — aborting", MAX_CONNECT_RETRIES)
-                    print(
-                        f"\n  Connection to {hostname} failed after "
-                        f"{MAX_CONNECT_RETRIES} attempts. Check network/VPN."
-                    )
-                    return False
-                log.warning(
-                    "Connection error (%d/%d): %s — retrying in %ds",
-                    connect_failures, MAX_CONNECT_RETRIES,
-                    exc, CONNECT_RETRY_DELAY,
-                )
-                print(
-                    f"\n  Connection failed ({connect_failures}/{MAX_CONNECT_RETRIES})"
-                    f" — retrying in {CONNECT_RETRY_DELAY}s..."
-                )
-                if stop_event:
-                    stop_event.wait(CONNECT_RETRY_DELAY)
-                    if stop_event.is_set():
-                        log.info("Stop requested — aborting connection retry")
-                        return False
-                else:
-                    time.sleep(CONNECT_RETRY_DELAY)
-                continue
-
-            if "invalid username or password" not in str(exc).lower():
-                raise
-            auth_attempts += 1
-            remaining = MAX_LOGIN_ATTEMPTS - auth_attempts
-            if remaining == 0:
-                print(f"\n  Authentication failed after {MAX_LOGIN_ATTEMPTS} attempts.")
-                return False
-            print(f"\n  Login failed — invalid password. {remaining} attempt(s) remaining.")
-            clear_password(hostname, username)
-            cfg.tenant.password = _prompt_password(
-                f"Password for {username}@{hostname}"
-            )
-    return False
-
-
 def cmd_setup(cfg: ToolConfig) -> int:
     """Interactive setup — save tenant, username, and encrypted password."""
     print("\n=== Netskope Upgrade Tool Setup ===\n")
@@ -333,7 +325,7 @@ def cmd_setup(cfg: ToolConfig) -> int:
     if platform:
         cfg.client.platform = platform
 
-    password = _prompt_password("Admin password").strip()
+    password = prompt_password("Admin password").strip()
     if password and cfg.tenant.hostname and cfg.tenant.username:
         save_password(password, cfg.tenant.hostname, cfg.tenant.username)
         print("  Password encrypted and saved.")
@@ -500,9 +492,9 @@ def cmd_continue(args: argparse.Namespace) -> int:
         )
 
     if getattr(args, "result_file", None):
-        _write_result_json(result, log_dir, args.result_file)
+        write_result_json(result, log_dir, args.result_file)
     elif state.original_argv:
-        _try_record_manual_result(result, log_dir, state.original_argv)
+        try_record_manual_result(result, log_dir, state.original_argv)
 
     return 0 if result.success else 1
 
@@ -746,8 +738,8 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
     # Print result summary
     _print_result(result)
     if args.result_file:
-        _write_result_json(result, runner.log_dir, args.result_file, started_at=start_time)
-    _try_record_manual_result(result, runner.log_dir, sys.argv[1:], started_at=start_time)
+        write_result_json(result, runner.log_dir, args.result_file, started_at=start_time)
+    try_record_manual_result(result, runner.log_dir, sys.argv[1:], started_at=start_time)
     return 0 if result.success else 1
 
 
@@ -789,11 +781,6 @@ def cmd_disable_upgrade(cfg: ToolConfig, args: argparse.Namespace,
 _GREEN = "\033[92m"
 _RED = "\033[91m"
 _RESET = "\033[0m"
-
-
-def _icon(ok: bool) -> str:
-    """Return a colored PASS/FAIL tag."""
-    return f"{_GREEN}PASS{_RESET}" if ok else f"{_RED}FAIL{_RESET}"
 
 
 def _print_result(result: UpgradeResult) -> None:
@@ -885,175 +872,6 @@ def _print_result(result: UpgradeResult) -> None:
     print("\n" + "\n".join(colored_lines) + "\n")
 
 
-def _write_result_json(
-    result: "UpgradeResult",
-    log_dir: "Optional[Path]",
-    path: str,
-    started_at: str = "",
-) -> None:
-    """
-    Write an UpgradeResult as JSON for the batch runner.
-
-    :param result: The UpgradeResult to serialize.
-    :param log_dir: The scenario log directory (may be None).
-    :param path: File path to write.
-    :param started_at: ISO timestamp when the test started.
-    """
-    import json as _json
-    data = {
-        "success": result.success,
-        "critical_failure": result.critical_failure,
-        "scenario": result.scenario,
-        "version_before": result.version_before,
-        "version_after": result.version_after,
-        "expected_version": result.expected_version,
-        "webui_version": result.webui_version,
-        "elapsed_seconds": result.elapsed_seconds,
-        "message": result.message,
-        "log_dir": str(log_dir) if log_dir else "",
-        "started_at": started_at,
-        "finished_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            _json.dump(data, f, indent=2)
-            f.write("\n")
-        log.info("Result written to %s", path)
-    except Exception as exc:
-        log.warning("Failed to write result file: %s", exc)
-
-
-# Flags to strip when matching manual argv against batch test args.
-# These are meta-flags that don't affect which test is being run.
-_STRIP_FLAGS_WITH_VAL = frozenset({
-    "--config", "--tenant", "--username", "--password", "--result-file",
-})
-_STRIP_FLAGS_BOOL = frozenset({"-v", "--verbose"})
-
-
-def _normalize_argv(tokens: list[str]) -> frozenset[str]:
-    """
-    Strip meta-flags from argv tokens and return a frozenset for
-    order-insensitive comparison against batch test arg sets.
-    """
-    out: list[str] = []
-    skip_next = False
-    for tok in tokens:
-        if skip_next:
-            skip_next = False
-            continue
-        if tok in _STRIP_FLAGS_WITH_VAL:
-            skip_next = True
-            continue
-        if tok in _STRIP_FLAGS_BOOL:
-            continue
-        out.append(tok)
-    return frozenset(out)
-
-
-def _try_record_manual_result(
-    result: "UpgradeResult",
-    log_dir: "Optional[Path]",
-    argv: list[str],
-    started_at: str = "",
-) -> None:
-    """
-    If a batch record exists and *argv* matches a recordable test, update
-    that test with the result.  Silently skips if no record or no match.
-
-    For success results: updates any matching test.
-    For failure/critical-failure results: updates a matching test only if
-    the test is pending, or if the test is already failed but has no
-    Before/After/Log information yet.
-
-    Matching is order-insensitive: argv tokens are normalised to a
-    frozenset and compared against each test's full args frozenset.
-
-    :param result: UpgradeResult from this run.
-    :param log_dir: Scenario log directory.
-    :param argv: sys.argv[1:] from this invocation.
-    :param started_at: ISO timestamp when the run started.
-    """
-    try:
-        import shlex
-        from util_batch import (
-            BATCH_JSON, BATCH_RECORD_JSON,
-            BATCH_LOCAL_JSON, BATCH_RECORD_LOCAL_JSON,
-            apply_result_to_test, create_record, generate_html_report,
-            load_batch_config, load_record, save_record,
-        )
-
-        # Route --target local runs to the dedicated local batch files.
-        is_local_target = False
-        try:
-            tidx = argv.index("--target")
-            if tidx + 1 < len(argv) and argv[tidx + 1] == "local":
-                is_local_target = True
-        except (ValueError, IndexError):
-            pass
-
-        batch_json = BATCH_LOCAL_JSON if is_local_target else BATCH_JSON
-        batch_record_json = (
-            BATCH_RECORD_LOCAL_JSON if is_local_target else BATCH_RECORD_JSON
-        )
-        report_html = batch_record_json.parent / (
-            "batch_report_local.html" if is_local_target else "batch_report.html"
-        )
-
-        record = load_record(batch_record_json)
-        if record is None:
-            if not batch_json.exists():
-                return
-            base_args, tests = load_batch_config(batch_json)
-            record = create_record(base_args, tests)
-            log.info("Created batch record from %s", batch_json)
-
-        manual_set = _normalize_argv(argv)
-        is_failure = not result.success
-
-        for test in record.tests:
-            full = (record.base_args + " " + test.extra_args).strip()
-            batch_set = _normalize_argv(shlex.split(full, posix=False))
-            if batch_set != manual_set:
-                continue
-
-            # For failure results: only update if test is pending, or if
-            # test is already failed with no Before/After/Log info.
-            if is_failure:
-                is_empty_fail = (
-                    test.status == "fail"
-                    and not test.version_before
-                    and not test.version_after
-                    and not test.log_dir
-                )
-                if test.status != "pending" and not is_empty_fail:
-                    continue
-
-            apply_result_to_test(test, {
-                "success": result.success,
-                "critical_failure": result.critical_failure,
-                "log_dir": str(log_dir) if log_dir else "",
-                "version_before": result.version_before,
-                "version_after": result.version_after,
-                "expected_version": result.expected_version,
-                "elapsed_seconds": result.elapsed_seconds,
-                "message": result.message,
-                "started_at": started_at,
-                "finished_at": datetime.now().isoformat(timespec="seconds"),
-            })
-            save_record(record, batch_record_json)
-            generate_html_report(record, report_html)
-            log.info("Manual result mapped to batch test [%s]", test.id)
-            return
-    except Exception as exc:
-        log.debug("Could not map manual result to batch record: %s", exc)
-
-
-def _prompt_password(label: str) -> str:
-    """Prompt for a password."""
-    return getpass.getpass(f"  {label}: ")
-
-
 def _close_browsers_and_drivers() -> None:
     """Gracefully close browsers and kill stale chromedriver processes."""
     # Gracefully close browser windows (without killing the process tree)
@@ -1125,7 +943,7 @@ def main() -> int:
         if saved:
             cfg.tenant.password = saved
         else:
-            cfg.tenant.password = _prompt_password(
+            cfg.tenant.password = prompt_password(
                 f"Password for {cfg.tenant.username}@{cfg.tenant.hostname}"
             )
 
