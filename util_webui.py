@@ -360,7 +360,7 @@ def retry_webui_call(
     **kwargs: Any,
 ) -> Any:
     """
-    Call *fn(\*args, \*\*kwargs)* and retry up to *retries* times on
+    Call *fn(*args, **kwargs)* and retry up to *retries* times on
     connection/timeout errors, waiting *delay* seconds between attempts.
 
     Non-connection exceptions are re-raised immediately.
