@@ -30,7 +30,7 @@ from util_verify import (
     format_validation_issues,
     is_mismatch_only_failure,
 )
-from util_webui import WebUIClient
+from util_webui import WebUIClient, retry_webui_call
 
 
 def _version_key(version: str) -> tuple[int, ...]:
@@ -208,7 +208,7 @@ class UpgradeRunner:
             log.info("Version before upgrade: %s", version_before)
 
             # Get expected target version
-            all_versions = self.webui.get_release_versions()
+            all_versions = retry_webui_call(self.webui.get_release_versions)
             expected = self._apply_64bit_suffix(
                 all_versions["latestversion"],
             )
@@ -227,7 +227,8 @@ class UpgradeRunner:
                 )
             else:
                 self._check_stopped()
-                self.webui.enable_upgrade_latest(
+                retry_webui_call(
+                    self.webui.enable_upgrade_latest,
                     search_config=self.config_name,
                     target_64_bit=self.target_64_bit,
                 )
@@ -365,7 +366,7 @@ class UpgradeRunner:
         log.info("=" * 70)
         try:
             # Resolve golden version
-            all_versions = self.webui.get_release_versions()
+            all_versions = retry_webui_call(self.webui.get_release_versions)
             available_golden = sorted(
                 all_versions.get("goldenversions", []),
                 key=_version_key,
@@ -410,7 +411,7 @@ class UpgradeRunner:
 
             # Auto-pick from_version for download fallback if not provided
             if from_version is None:
-                version_list = self.webui.get_sorted_version_list()
+                version_list = retry_webui_call(self.webui.get_sorted_version_list)
                 older_candidates = [
                     v for v in version_list
                     if int(v.split(".")[0]) < int(golden_version.split(".")[0])
@@ -463,7 +464,8 @@ class UpgradeRunner:
                 )
             else:
                 self._check_stopped()
-                self.webui.enable_upgrade_golden(
+                retry_webui_call(
+                    self.webui.enable_upgrade_golden,
                     golden_version, dot=dot,
                     search_config=self.config_name,
                     target_64_bit=self.target_64_bit,
@@ -615,7 +617,8 @@ class UpgradeRunner:
 
             # Disable auto-upgrade and verify it stays
             self._check_stopped()
-            self.webui.disable_auto_upgrade(
+            retry_webui_call(
+                self.webui.disable_auto_upgrade,
                 search_config=self.config_name,
             )
             if nsclient_ok:

@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 LOGIN_TIMEOUT_SECONDS = 60
 
@@ -350,3 +350,43 @@ def _is_connection_error(exc: BaseException) -> bool:
     return any(hint in exc_str for hint in (
         "connection", "timed out", "timeout", "maxretryerror",
     ))
+
+
+def retry_webui_call(
+    fn: Callable,
+    *args: Any,
+    retries: int = 10,
+    delay: float = 5.0,
+    **kwargs: Any,
+) -> Any:
+    """
+    Call *fn(\*args, \*\*kwargs)* and retry up to *retries* times on
+    connection/timeout errors, waiting *delay* seconds between attempts.
+
+    Non-connection exceptions are re-raised immediately.
+
+    :param fn: Callable to invoke.
+    :param retries: Maximum number of attempts (including the first).
+    :param delay: Seconds between retry attempts.
+    :raises: The last exception if all attempts fail.
+    """
+    last_exc: BaseException
+    for attempt in range(1, retries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            if not _is_connection_error(exc):
+                raise
+            last_exc = exc
+            if attempt < retries:
+                log.warning(
+                    "WebUI call failed (attempt %d/%d, retrying in %.0fs): %s",
+                    attempt, retries, delay, exc,
+                )
+                time.sleep(delay)
+            else:
+                log.error(
+                    "WebUI call failed after %d attempts: %s",
+                    retries, exc,
+                )
+    raise last_exc
