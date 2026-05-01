@@ -27,6 +27,16 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 - **non-critical exception still has critical_failure=False**: Verify a generic `RuntimeError` from `ensure_client_installed` still returns `critical_failure=False`.
 - **uninstall_msi assert_called_once_with**: Lines 880, 911 need `log_dir=None` kwarg added.
 
+## test_util_monitor.py — standby wake reset in wait_for_upgrade_complete
+
+- **`standby_completed` resets `svc_went_down`**: Set `standby_completed=True` on state before calling `wait_for_upgrade_complete`; mock service running with same PID as initial; verify it does NOT return True immediately (false positive blocked).
+- **`standby_completed` resets `initial_pid`**: Verify that after wake, `initial_pid` is updated to the current PID so `pid_changed` is computed against the post-wake baseline.
+- **`standby_completed` extends deadline by MONITOR_TIMEOUT**: Set `standby_completed=True` mid-loop (via a side-effect); verify the deadline is extended by `MONITOR_TIMEOUT` seconds.
+- **`standby_completed` only handled once**: Verify `_wake_handled` prevents re-processing subsequent iterations.
+- **`_trigger_standby` sets `standby_completed` on success**: After mock `enter_s0_and_wake` returns True, verify `state.standby_completed == True`.
+- **`_trigger_standby` sets `standby_completed` on failure**: After mock returns False, verify `state.standby_completed == True` (finally block).
+- **`_trigger_standby` sets `standby_completed` on exception**: After mock raises Exception, verify `state.standby_completed == True` (finally block).
+
 ## test_util_monitor.py — standby feature
 
 - **`_trigger_standby` idempotency**: Call `_trigger_standby()` twice on the same monitor; mock `enter_s1_and_wake`. Verify the power API is called exactly once (second call is a no-op via `standby_triggered` guard).
