@@ -489,6 +489,17 @@ class LocalClient:
         if msi_log.is_file():
             msi_log.unlink(missing_ok=True)
         log.info("msiexec install completed")
+        # Force-kill any lingering msiexec processes so they don't block
+        # a subsequent upgrade msiexec run.
+        try:
+            kill_result = subprocess.run(
+                ["taskkill", "/F", "/IM", "msiexec.exe"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if kill_result.returncode == 0:
+                log.info("Killed lingering msiexec.exe processes after base install")
+        except Exception as exc:
+            log.warning("Failed to kill msiexec.exe after install: %s", exc)
 
     @staticmethod
     def _is_admin() -> bool:
