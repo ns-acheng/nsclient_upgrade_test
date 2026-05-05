@@ -26,6 +26,7 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 - **critical_failure on UninstallCriticalError**: All three scenario except blocks (`run_upgrade_to_latest`, `run_upgrade_to_golden`, `run_upgrade_disabled`) now set `critical_failure=True` when the exception is `UninstallCriticalError`. Add tests that mock `ensure_client_installed` raising `UninstallCriticalError` and verify the returned `UpgradeResult.critical_failure is True`.
 - **non-critical exception still has critical_failure=False**: Verify a generic `RuntimeError` from `ensure_client_installed` still returns `critical_failure=False`.
 - **uninstall_msi assert_called_once_with**: Lines 880, 911 need `log_dir=None` kwarg added.
+- **opt-in scheduling payload only**: Verify latest/golden upgrade flows pass `use_schedule=False` by default and only include `useScheduledUpgrade` in WebUI update payload when CLI uses `--use_shcedule`/`--use_schedule`.
 
 ## test_util_monitor.py — standby wake reset in wait_for_upgrade_complete
 
