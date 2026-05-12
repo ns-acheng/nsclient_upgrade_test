@@ -10,5 +10,8 @@
     },
     "asu-02.stg.boomskope.com": {
         "installer_name": "NSClient_addon-asu-02.stg.boomskope.com_33628_aUBmKOb4gdR7W3aJ2ehU"
+    },
+    "nsclient-usa.eu.goskope.com": {
+        "installer_name": "NSClient_addon-nsclient-usa.eu.goskope.com_14149_WrFJp0RwL274wtdm1YGK"
     }
 }
