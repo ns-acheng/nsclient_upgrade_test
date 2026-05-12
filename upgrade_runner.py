@@ -99,6 +99,7 @@ class UpgradeRunner:
         batch_mode: bool = False,
         original_argv: Optional[list[str]] = None,
         simulate_upgrade: bool = False,
+        use_schedule: bool = False,
     ) -> None:
         """
         Initialize the upgrade runner.
@@ -140,6 +141,7 @@ class UpgradeRunner:
         self._watchdog_mode: bool = False
         self._auto_update_already_enabled: bool = False
         self._simulate_upgrade: bool = simulate_upgrade
+        self._use_schedule: bool = use_schedule
         self._crash_monitor: Optional[CrashMonitor] = None
 
         # Composed helpers
@@ -231,6 +233,7 @@ class UpgradeRunner:
                     self.webui.enable_upgrade_latest,
                     search_config=self.config_name,
                     target_64_bit=self.target_64_bit,
+                    use_schedule=self._use_schedule,
                 )
             self._upgrade_enabled = True
 
@@ -469,6 +472,7 @@ class UpgradeRunner:
                     golden_version, dot=dot,
                     search_config=self.config_name,
                     target_64_bit=self.target_64_bit,
+                    use_schedule=self._use_schedule,
                 )
             self._upgrade_enabled = True
 

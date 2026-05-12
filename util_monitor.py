@@ -126,6 +126,11 @@ class MonitorState:
     # thread resumes automatically after the system wakes.
     standby: Optional[str] = None
     standby_triggered: bool = False
+    # Set to True by _trigger_standby after the system wakes — signals
+    # wait_for_upgrade_complete to reset its service baseline and extend
+    # the deadline, avoiding false-positive completion from stale state
+    # collected while the system was asleep.
+    standby_completed: bool = False
 
     # Track whether scheduled task was created (only for reboot mode).
     # In standby mode, no task is created since monitor survives wake.
@@ -504,8 +509,23 @@ class TimingMonitor:
         svc_went_down = False
         deadline_extended = False
         deadline = time.time() + wait_time
+        _wake_handled = False
 
         while time.time() < deadline:
+            # After S0/S1 wake: reset stale service state and extend deadline
+            if not _wake_handled:
+                with self._lock:
+                    woke = self._state.standby_completed
+                if woke:
+                    _wake_handled = True
+                    svc_went_down = False
+                    initial_pid = _get_process_pid("stAgentSvc.exe")
+                    deadline = time.time() + MONITOR_TIMEOUT
+                    log.info(
+                        "Standby wake detected — resetting service baseline "
+                        "(pid=%s) and extending deadline by %ds",
+                        initial_pid, MONITOR_TIMEOUT,
+                    )
             # ── Timing 1 fast-path reboot ────────────────────────
             # Timing 1 fires during config sync right after the MSI
             # install.  When reboot_time == 1 (and not standby), prepare
@@ -938,6 +958,9 @@ class TimingMonitor:
             log.error(
                 "Standby %s failed: %s — resuming monitor", level.upper(), exc,
             )
+        finally:
+            with self._lock:
+                self._state.standby_completed = True
 
     # ── Detector helpers ─────────────────────────────────────────
 

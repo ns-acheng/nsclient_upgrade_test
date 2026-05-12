@@ -253,6 +253,13 @@ def build_parser() -> argparse.ArgumentParser:
             "cache.newClientVer=137.0.0.2222 before local upgrade MSI install"
         ),
     )
+    upgrade_parser.add_argument(
+        "--use_shcedule", "--use_schedule", dest="use_schedule", action="store_true",
+        help=(
+            "Enable useScheduledUpgrade in tenant payload for latest/golden targets. "
+            "By default scheduling is not set."
+        ),
+    )
 
     # ── disable-upgrade ─────────────────────────────────────────
     disable_parser = subparsers.add_parser(
@@ -710,6 +717,7 @@ def cmd_upgrade(cfg: ToolConfig, args: argparse.Namespace,
         batch_mode=bool(args.result_file),
         original_argv=sys.argv[1:],
         simulate_upgrade=bool(args.simulate),
+        use_schedule=bool(getattr(args, "use_schedule", False)),
     )
 
     # Execute scenario

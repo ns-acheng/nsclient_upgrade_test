@@ -26,6 +26,17 @@ Track UT coverage gaps here. Address in a dedicated batch pass.
 - **critical_failure on UninstallCriticalError**: All three scenario except blocks (`run_upgrade_to_latest`, `run_upgrade_to_golden`, `run_upgrade_disabled`) now set `critical_failure=True` when the exception is `UninstallCriticalError`. Add tests that mock `ensure_client_installed` raising `UninstallCriticalError` and verify the returned `UpgradeResult.critical_failure is True`.
 - **non-critical exception still has critical_failure=False**: Verify a generic `RuntimeError` from `ensure_client_installed` still returns `critical_failure=False`.
 - **uninstall_msi assert_called_once_with**: Lines 880, 911 need `log_dir=None` kwarg added.
+- **opt-in scheduling payload only**: Verify latest/golden upgrade flows pass `use_schedule=False` by default and only include `useScheduledUpgrade` in WebUI update payload when CLI uses `--use_shcedule`/`--use_schedule`.
+
+## test_util_monitor.py — standby wake reset in wait_for_upgrade_complete
+
+- **`standby_completed` resets `svc_went_down`**: Set `standby_completed=True` on state before calling `wait_for_upgrade_complete`; mock service running with same PID as initial; verify it does NOT return True immediately (false positive blocked).
+- **`standby_completed` resets `initial_pid`**: Verify that after wake, `initial_pid` is updated to the current PID so `pid_changed` is computed against the post-wake baseline.
+- **`standby_completed` extends deadline by MONITOR_TIMEOUT**: Set `standby_completed=True` mid-loop (via a side-effect); verify the deadline is extended by `MONITOR_TIMEOUT` seconds.
+- **`standby_completed` only handled once**: Verify `_wake_handled` prevents re-processing subsequent iterations.
+- **`_trigger_standby` sets `standby_completed` on success**: After mock `enter_s0_and_wake` returns True, verify `state.standby_completed == True`.
+- **`_trigger_standby` sets `standby_completed` on failure**: After mock returns False, verify `state.standby_completed == True` (finally block).
+- **`_trigger_standby` sets `standby_completed` on exception**: After mock raises Exception, verify `state.standby_completed == True` (finally block).
 
 ## test_util_monitor.py — standby feature
 

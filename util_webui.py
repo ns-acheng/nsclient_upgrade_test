@@ -181,38 +181,41 @@ class WebUIClient:
         search_config: str = "",
         schedule_minutes: int = 4,
         target_64_bit: Optional[bool] = None,
+        use_schedule: bool = False,
     ) -> dict[str, Any]:
         """
-        Enable auto-upgrade to the latest release and schedule it.
+        Enable auto-upgrade to the latest release.
 
         Disables golden-upgrade flags and optionally sets the 64-bit
-        flag in a single API call.
+        flag in a single API call. When *use_schedule* is True,
+        includes ``useScheduledUpgrade`` in the same API call.
 
         :param search_config: Config name (empty for default).
         :param schedule_minutes: Minutes from now to trigger upgrade.
         :param target_64_bit: If not None, set updateWin64Bit (True=64-bit).
+        :param use_schedule: If True, include useScheduledUpgrade payload.
         :return: API response dict.
         """
-        upgrade_time = (
-            datetime.now() + timedelta(minutes=schedule_minutes)
-        ).strftime("%H:%M")
-        schedule: dict[str, Any] = {
-            "frequencyType": "daily",
-            "weekDay": [],
-            "weekOfTheMonth": [],
-            "time": upgrade_time,
-        }
         log.info(
-            "Enabling auto-upgrade to LATEST release, schedule=%s (now + %d min), config=%r",
-            upgrade_time, schedule_minutes, search_config or "(default)",
+            "Enabling auto-upgrade to LATEST release (use_schedule=%s), config=%r",
+            use_schedule, search_config or "(default)",
         )
         kwargs: dict[str, Any] = {
             "clientAllowAutoUpdate": 1,
             "allowAutoGoldenUpdate": 0,
             "goldenReleaseVersion": "",
             "goldenDotReleaseUpdate": 0,
-            "useScheduledUpgrade": schedule,
         }
+        if use_schedule:
+            upgrade_time = (
+                datetime.now() + timedelta(minutes=schedule_minutes)
+            ).strftime("%H:%M")
+            kwargs["useScheduledUpgrade"] = {
+                "frequencyType": "daily",
+                "weekDay": [],
+                "weekOfTheMonth": [],
+                "time": upgrade_time,
+            }
         if target_64_bit is not None:
             kwargs["updateWin64Bit"] = 1 if target_64_bit else 0
         return self.update_client_config(
@@ -226,39 +229,42 @@ class WebUIClient:
         search_config: str = "",
         schedule_minutes: int = 4,
         target_64_bit: Optional[bool] = None,
+        use_schedule: bool = False,
     ) -> dict[str, Any]:
         """
-        Enable auto-upgrade to a specific golden release and schedule it.
+        Enable auto-upgrade to a specific golden release.
 
         Optionally sets the 64-bit flag in the same API call.
+        When *use_schedule* is True, includes ``useScheduledUpgrade``.
 
         :param golden_version: Target golden version string (e.g. '90.0.0').
         :param dot: If True, enable dot release updates within the golden.
         :param search_config: Config name (empty for default).
         :param schedule_minutes: Minutes from now to trigger upgrade.
         :param target_64_bit: If not None, set updateWin64Bit (True=64-bit).
+        :param use_schedule: If True, include useScheduledUpgrade payload.
         :return: API response dict.
         """
-        upgrade_time = (
-            datetime.now() + timedelta(minutes=schedule_minutes)
-        ).strftime("%H:%M")
-        schedule: dict[str, Any] = {
-            "frequencyType": "daily",
-            "weekDay": [],
-            "weekOfTheMonth": [],
-            "time": upgrade_time,
-        }
         log.info(
-            "Enabling auto-upgrade to GOLDEN release %s (dot=%s), schedule=%s (now + %d min), config=%r",
-            golden_version, dot, upgrade_time, schedule_minutes, search_config or "(default)",
+            "Enabling auto-upgrade to GOLDEN release %s (dot=%s, use_schedule=%s), config=%r",
+            golden_version, dot, use_schedule, search_config or "(default)",
         )
         kwargs: dict[str, Any] = {
             "clientAllowAutoUpdate": 1,
             "allowAutoGoldenUpdate": 1,
             "goldenReleaseVersion": golden_version,
             "goldenDotReleaseUpdate": 1 if dot else 0,
-            "useScheduledUpgrade": schedule,
         }
+        if use_schedule:
+            upgrade_time = (
+                datetime.now() + timedelta(minutes=schedule_minutes)
+            ).strftime("%H:%M")
+            kwargs["useScheduledUpgrade"] = {
+                "frequencyType": "daily",
+                "weekDay": [],
+                "weekOfTheMonth": [],
+                "time": upgrade_time,
+            }
         if target_64_bit is not None:
             kwargs["updateWin64Bit"] = 1 if target_64_bit else 0
         return self.update_client_config(

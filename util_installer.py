@@ -592,7 +592,7 @@ def find_base_installer(base_filename: str) -> Optional[Path]:
     if base.is_file():
         return base
     # Single-file fallback
-    files = [f for f in BASE_VERSION_DIR.iterdir() if f.is_file()]
+    files = [f for f in BASE_VERSION_DIR.iterdir() if f.is_file() and f.suffix.lower() == ".msi"]
     if len(files) == 1:
         return files[0]
     return None
@@ -662,7 +662,7 @@ def resolve_installer(
     # Find the base installer file
     base = BASE_VERSION_DIR / base_filename
     if not base.is_file():
-        files = [f for f in BASE_VERSION_DIR.iterdir() if f.is_file()]
+        files = [f for f in BASE_VERSION_DIR.iterdir() if f.is_file() and f.suffix.lower() == ".msi"]
         if len(files) == 1:
             source = files[0]
             log.info("Copying %s -> %s", source.name, base_filename)
